@@ -5,17 +5,30 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 )
 
 var (
 	benchmarkKeys   []string
-	benchmarkRecord *Record
+	benchmarkRecord Record
 )
+
+func TestRecordIsExpired(t *testing.T) {
+	r1 := Record{ExpireTime: 0}
+	if r1.IsExpired() {
+		t.Fatalf("record should never expire")
+	}
+
+	r2 := Record{ExpireTime: 1 * time.Nanosecond}
+	time.Sleep(10 * time.Millisecond)
+
+	if !r2.IsExpired() {
+		t.Fatalf("record should be expired")
+	}
+}
 
 func TestUnsafeHashStore(t *testing.T) {
 	h := newUnsafeHash(0)
-	uh := h.(*unsafeHash)
-
 	tests := []struct {
 		Key    string
 		Before interface{}
@@ -28,8 +41,8 @@ func TestUnsafeHashStore(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		h.Store(tt.Key, &Record{Data: tt.Before})
-		rec, ok := uh.records[tt.Key]
+		h.Store(tt.Key, Record{Data: tt.Before})
+		rec, ok := h.records[tt.Key]
 
 		if !ok {
 			t.Fatalf("key `%s` is expected to be in hash table", tt.Key)
@@ -48,8 +61,8 @@ func TestUnsafeHashStore(t *testing.T) {
 			t.Fatalf("index for `%s` must be equal to 1", tt.Key)
 		}
 
-		h.Store(tt.Key, &Record{Data: tt.After})
-		rec, _ = uh.records[tt.Key]
+		h.Store(tt.Key, Record{Data: tt.After})
+		rec, _ = h.records[tt.Key]
 
 		if !reflect.DeepEqual(tt.After, rec.Data) {
 			t.Fatalf("value for `%s` must be `%v`, got `%v`",
@@ -64,7 +77,6 @@ func TestUnsafeHashStore(t *testing.T) {
 
 func TestUnsafeHashLoad(t *testing.T) {
 	h := newUnsafeHash(0)
-
 	tests := []struct {
 		Key  string
 		Data interface{}
@@ -74,7 +86,7 @@ func TestUnsafeHashLoad(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		h.Store(tt.Key, &Record{Data: tt.Data})
+		h.Store(tt.Key, Record{Data: tt.Data})
 		rec, ok := h.Load(tt.Key)
 
 		if !ok {
@@ -89,8 +101,8 @@ func TestUnsafeHashLoad(t *testing.T) {
 
 func TestUnsafeHashKeys(t *testing.T) {
 	h := newUnsafeHash(0)
-	h.Store("1", &Record{Data: 42})
-	h.Store("2", &Record{Data: 43})
+	h.Store("1", Record{Data: 42})
+	h.Store("2", Record{Data: 43})
 
 	tests := []struct {
 		Key  string
@@ -102,7 +114,7 @@ func TestUnsafeHashKeys(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		h.Store(tt.Key, &Record{Data: tt.Data})
+		h.Store(tt.Key, Record{Data: tt.Data})
 		if keys := h.Keys(); !reflect.DeepEqual(keys, tt.Keys) {
 			t.Fatalf("invalid list of keys returned: `%v`", keys)
 		}
@@ -112,10 +124,10 @@ func TestUnsafeHashKeys(t *testing.T) {
 func TestUnsafeHashDelete(t *testing.T) {
 	h := newUnsafeHash(0)
 
-	h.Store("1", &Record{Data: 0})
-	h.Store("2", &Record{Data: 1})
-	h.Store("3", &Record{Data: 2})
-	h.Store("4", &Record{Data: 3})
+	h.Store("1", Record{Data: 0})
+	h.Store("2", Record{Data: 1})
+	h.Store("3", Record{Data: 2})
+	h.Store("4", Record{Data: 3})
 
 	tests := []struct {
 		Key  string
@@ -145,7 +157,7 @@ func BenchmarkUnsafeHashKeys(b *testing.B) {
 	var keys []string
 
 	for i := 0; i < b.N; i++ {
-		h.Store(fmt.Sprintf("%d", i), &Record{Data: nil})
+		h.Store(fmt.Sprintf("%d", i), Record{Data: nil})
 		keys = h.Keys()
 	}
 
@@ -157,10 +169,10 @@ func BenchmarkUnsafeHashKeys(b *testing.B) {
 
 func BenchmarkUnsafeHashLoad(b *testing.B) {
 	h := newUnsafeHash(0)
-	var rec *Record
+	var rec Record
 
 	for i := 0; i < b.N; i++ {
-		h.Store(fmt.Sprintf("%d", i), &Record{Data: nil})
+		h.Store(fmt.Sprintf("%d", i), Record{Data: nil})
 		rec, _ = h.Load(fmt.Sprintf("%d", i))
 	}
 
@@ -170,7 +182,7 @@ func BenchmarkUnsafeHashLoad(b *testing.B) {
 func BenchmarkUnsafeHashStore(b *testing.B) {
 	h := newUnsafeHash(0)
 	for i := 0; i < b.N; i++ {
-		h.Store(fmt.Sprintf("%d", i), &Record{Data: nil})
+		h.Store(fmt.Sprintf("%d", i), Record{Data: nil})
 	}
 }
 
@@ -178,7 +190,7 @@ func BenchmarkUnsafeHashDelete(b *testing.B) {
 	h := newUnsafeHash(0)
 	for i := 0; i < b.N; i++ {
 		key := fmt.Sprintf("%d", i)
-		h.Store(key, &Record{Data: nil})
+		h.Store(key, Record{Data: nil})
 		h.Delete(key)
 	}
 }

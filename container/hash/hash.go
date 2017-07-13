@@ -10,9 +10,9 @@ type Record struct {
 	// data is updated an index value is incremented.
 	Index int64
 
-	// Time to live for the record. If time to live is less than zero
-	// means, record won't be ever evicted from the storage.
-	TTL time.Time
+	// Time to live for the record. If time to live is less than or
+	// equal to zero, record won't be ever evicted from the storage.
+	ExpireTime time.Duration
 
 	// AccessedAt defines a moment when the record was accessed last
 	// time.
@@ -30,17 +30,41 @@ type Record struct {
 	Data interface{}
 }
 
+// IsExpired returns true when the ExpireTime is more than zero and record
+// exist longer than value define in a ExpireTime.
+func (r *Record) IsExpired() bool {
+	if r.IsPermanent() {
+		return false
+	}
+
+	now := time.Now()
+	// Calculate how much data is presented in a storage.
+	live := now.Sub(r.CreatedAt)
+	return live > r.ExpireTime
+}
+
+// IsPermanent returns true, when expiration time is less than or equal
+// to zero, and false otherwise.
+func (r *Record) IsPermanent() bool {
+	return r.ExpireTime <= 0
+}
+
+// ExpiresAt returns a moment in a future, when the record expires.
+func (r *Record) ExpiresAt() time.Time {
+	return r.CreatedAt.Add(r.ExpireTime)
+}
+
 type Hash interface {
 	Keys() []string
-	Load(key string) (rec *Record, ok bool)
-	Store(key string, rec *Record)
+	Load(key string) (rec Record, ok bool)
+	Store(key string, rec Record)
 	Delete(key string)
 }
 
 // unsafeHash is an extension of the builtin map type. It is unsafe to
 // use this type by multiple go-routines.
 type unsafeHash struct {
-	records map[string]*Record
+	records map[string]Record
 
 	// The list of keys to be able retrieve them in a constant time
 	// in average.
@@ -53,11 +77,15 @@ type unsafeHash struct {
 	dirty bool
 }
 
+func NewUnsafeHash(cap int) Hash {
+	return newUnsafeHash(cap)
+}
+
 // newUnsafeHash creates a thread-safe hash table, where cap defines
 // an initial capacity of the hash-table.
-func newUnsafeHash(cap int) Hash {
+func newUnsafeHash(cap int) *unsafeHash {
 	return &unsafeHash{
-		records: make(map[string]*Record, cap),
+		records: make(map[string]Record, cap),
 	}
 }
 
@@ -79,11 +107,22 @@ func (h *unsafeHash) Keys() []string {
 }
 
 // Load implements Hash interface.
-func (h *unsafeHash) Load(key string) (*Record, bool) {
-	rec, ok := h.records[key]
+//
+// When the record is expired it will be removed from the storage, until
+// that moment it will occupy the memory.
+func (h *unsafeHash) Load(key string) (rec Record, ok bool) {
+	rec, ok = h.records[key]
 	if !ok {
-		return nil, false
+		return rec, false
 	}
+
+	// Check if the record should be removed from the storage.
+	// if rec.IsExpired() {
+	// 	// The lifetime of the record has been expired, it
+	// 	// will be evicted from the database.
+	// 	h.Delete(key)
+	// 	return rec, false
+	// }
 
 	// Update accessed time of the record in a hash table.
 	rec.AccessedAt = time.Now()
@@ -91,16 +130,11 @@ func (h *unsafeHash) Load(key string) (*Record, bool) {
 }
 
 // Store implements Hash interface.
-func (h *unsafeHash) Store(key string, rec *Record) {
-	if rec == nil {
-		panic("hash: Store record is nil")
-	}
-
+func (h *unsafeHash) Store(key string, rec Record) {
 	prevrec, ok := h.records[key]
 	if !ok {
 		// Create a new record, when it is missing in the hash table.
-		prevrec = &Record{CreatedAt: time.Now()}
-		h.records[key] = prevrec
+		prevrec = Record{CreatedAt: time.Now()}
 	}
 
 	// Append a new key into the list of keys only when it is not
@@ -112,7 +146,9 @@ func (h *unsafeHash) Store(key string, rec *Record) {
 	prevrec.Index++
 	prevrec.UpdatedAt = time.Now()
 	prevrec.Data = rec.Data
-	prevrec.TTL = rec.TTL
+	prevrec.ExpireTime = rec.ExpireTime
+
+	h.records[key] = prevrec
 }
 
 // Delete implements Hash interface.
