@@ -69,7 +69,7 @@ func (h *unsafeHash) Keys() []string {
 
 	// Reduce the length of the slice to zero, but preserve capacity,
 	// so it won't spend time on allocation of a new slice.
-	h.keys = h.keys[0:]
+	h.keys = h.keys[:0]
 	for key := range h.records {
 		h.keys = append(h.keys, key)
 	}
@@ -92,6 +92,10 @@ func (h *unsafeHash) Load(key string) (*Record, bool) {
 
 // Store implements Hash interface.
 func (h *unsafeHash) Store(key string, rec *Record) {
+	if rec == nil {
+		panic("hash: Store record is nil")
+	}
+
 	prevrec, ok := h.records[key]
 	if !ok {
 		// Create a new record, when it is missing in the hash table.
@@ -105,7 +109,7 @@ func (h *unsafeHash) Store(key string, rec *Record) {
 		h.keys = append(h.keys, key)
 	}
 
-	prevrec.Index += 1
+	prevrec.Index++
 	prevrec.UpdatedAt = time.Now()
 	prevrec.Data = rec.Data
 	prevrec.TTL = rec.TTL
@@ -113,7 +117,10 @@ func (h *unsafeHash) Store(key string, rec *Record) {
 
 // Delete implements Hash interface.
 func (h *unsafeHash) Delete(key string) {
-	// Remove a key from the binary tree.
-	h.dirty = true
+	// Mark the keys as dirty only when the key to delete is presented
+	// in the hash, otherwise there is no need to re-build keys list.
+	if _, ok := h.records[key]; ok {
+		h.dirty = true
+	}
 	delete(h.records, key)
 }
