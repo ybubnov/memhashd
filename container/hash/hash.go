@@ -4,8 +4,11 @@ import (
 	"time"
 )
 
-// Record defines a record of a hash table.
-type Record struct {
+var (
+	RecordZero Record
+)
+
+type Meta struct {
 	// Index defines a record serial number. Each time the record
 	// data is updated an index value is incremented.
 	Index int64
@@ -25,6 +28,12 @@ type Record struct {
 	// UpdatedAt defines a moment when the record was updated. This
 	// value is changed on update of the resource record.
 	UpdatedAt time.Time
+}
+
+// Record defines a record of a hash table.
+type Record struct {
+	// Meta defines a record metadata.
+	Meta Meta
 
 	// A value of the record (can be a primitive type or list, map).
 	Data interface{}
@@ -39,19 +48,19 @@ func (r *Record) IsExpired() bool {
 
 	now := time.Now()
 	// Calculate how much data is presented in a storage.
-	live := now.Sub(r.CreatedAt)
-	return live > r.ExpireTime
+	live := now.Sub(r.Meta.CreatedAt)
+	return live > r.Meta.ExpireTime
 }
 
 // IsPermanent returns true, when expiration time is less than or equal
 // to zero, and false otherwise.
 func (r *Record) IsPermanent() bool {
-	return r.ExpireTime <= 0
+	return r.Meta.ExpireTime <= 0
 }
 
 // ExpiresAt returns a moment in a future, when the record expires.
 func (r *Record) ExpiresAt() time.Time {
-	return r.CreatedAt.Add(r.ExpireTime)
+	return r.Meta.CreatedAt.Add(r.Meta.ExpireTime)
 }
 
 type Hash interface {
@@ -116,16 +125,8 @@ func (h *unsafeHash) Load(key string) (rec Record, ok bool) {
 		return rec, false
 	}
 
-	// Check if the record should be removed from the storage.
-	// if rec.IsExpired() {
-	// 	// The lifetime of the record has been expired, it
-	// 	// will be evicted from the database.
-	// 	h.Delete(key)
-	// 	return rec, false
-	// }
-
 	// Update accessed time of the record in a hash table.
-	rec.AccessedAt = time.Now()
+	rec.Meta.AccessedAt = time.Now()
 	return rec, true
 }
 
@@ -134,7 +135,7 @@ func (h *unsafeHash) Store(key string, rec Record) {
 	prevrec, ok := h.records[key]
 	if !ok {
 		// Create a new record, when it is missing in the hash table.
-		prevrec = Record{CreatedAt: time.Now()}
+		prevrec = Record{Meta: Meta{CreatedAt: time.Now()}}
 	}
 
 	// Append a new key into the list of keys only when it is not
@@ -143,10 +144,10 @@ func (h *unsafeHash) Store(key string, rec Record) {
 		h.keys = append(h.keys, key)
 	}
 
-	prevrec.Index++
-	prevrec.UpdatedAt = time.Now()
+	prevrec.Meta.Index++
+	prevrec.Meta.UpdatedAt = time.Now()
+	prevrec.Meta.ExpireTime = rec.Meta.ExpireTime
 	prevrec.Data = rec.Data
-	prevrec.ExpireTime = rec.ExpireTime
 
 	h.records[key] = prevrec
 }

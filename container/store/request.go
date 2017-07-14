@@ -1,18 +1,18 @@
 package store
 
 import (
+	"fmt"
 	"reflect"
 
 	"memhashd/container/hash"
 )
 
-type Requester interface {
-	Request(hash.Hash) (Record, error)
-}
+type Request interface {
+	// ID returns an identifier of the request for easier tracking
+	// of the request lifetime.
+	ID() string
 
-type Response interface {
-	//WriteStatus(Status)
-	WriteBody(interface{})
+	Process(hash.Hash) (hash.Record, error)
 }
 
 // RequestKeys defines a request to a storage to retrieve a list of
@@ -23,8 +23,10 @@ type RequestKeys struct {
 }
 
 // Request implements Requester interface, it returns a list of keys.
-func (r *RequestKeys) Request(h hash.Hash) (interface{}, error) {
-	return h.Keys(), nil
+func (r *RequestKeys) Process(h hash.Hash) (hash.Record, error) {
+	panic("IS NOT A RECORD!!!")
+	//return h.Keys(), nil
+	return hash.RecordZero, nil
 }
 
 // RequestStore defines a request to a storage to store a value by
@@ -42,9 +44,9 @@ type RequestStore struct {
 // Request implements Requester interface, it stores a value into the
 // given hash-map. Hash should not be concurrently changed during this
 // operation.
-func (r *RequestStore) Request(h hash.Hash) (interface{}, error) {
-	h.Store(r.Key, Record{Data: r.Value})
-	return nil, nil
+func (r *RequestStore) Process(h hash.Hash) (hash.Record, error) {
+	h.Store(r.Key, hash.Record{Data: r.Value})
+	return hash.RecordZero, nil
 }
 
 // RequestLoad defines a request to a storage to load an element from
@@ -52,38 +54,17 @@ func (r *RequestStore) Request(h hash.Hash) (interface{}, error) {
 type RequestLoad struct {
 	// ID is a request identifier.
 	ID string
-
 	// Key is a name of the key.
 	Key string
 }
 
 // Request implements Requester interface, it returns a record value
 // stored in a hash map.
-func (r *RequestLoad) Request(h hash.Hash) (interface{}, error) {
+func (r *RequestLoad) Process(h hash.Hash) (hash.Record, error) {
 	rec, ok := h.Load(r.Key)
 	if !ok {
-		// error!
-	}
-
-	return rec.Data, nil
-}
-
-// RequestMeta defines a request to a storage to retrieve metadata
-// (last access time, creation time, etc.) about the record by the
-// given key.
-type RequestMeta struct {
-	// ID is a request identifier.
-	ID string
-	// Key is a name of the key.
-	Key string
-}
-
-// Request implements Requester interface, it returns a record metadata
-// stored in hash map.
-func (r *RequestMeta) Request(h hash.Hash) (interface{}, error) {
-	rec, ok := h.Load(r.Key)
-	if !ok {
-		// error!
+		text := fmt.Sprintf("%s does not exist", r.Key)
+		return hash.RecordZero, &ErrMissing{text}
 	}
 
 	return rec, nil
@@ -101,9 +82,9 @@ type RequestDelete struct {
 
 // Request implements Requester interface, it deletes a record from the
 // store.
-func (r *RequestDelete) Request(h hash.Hash) (interface{}, error) {
+func (r *RequestDelete) Process(h hash.Hash) (hash.Record, error) {
 	h.Delete(r.Key)
-	return nil, nil
+	return hash.RecordZero, nil
 }
 
 // RequestListItem defines a request to a store to retrieve an item from
@@ -114,34 +95,39 @@ type RequestListItem struct {
 	ID string
 	// Key is a name of the key.
 	Key string
-	// Pos is a position in a list.
-	Pos int
+	// Index is a position in a list.
+	Index uint64
 }
 
 // Request implements Requester interface, it returns an element of the
 // list.
-func (r *RequestListItem) Request(h hash.Hash) (interface{}, error) {
+func (r *RequestListItem) Process(h hash.Hash) (hash.Record, error) {
 	rec, ok := h.Load(r.Key)
 	if !ok {
-		// error!
+		text := fmt.Sprintf("%s does not exist", r.Key)
+		return hash.RecordZero, &ErrMissing{text}
 	}
 
 	switch reflect.TypeOf(rec.Data).Kind() {
 	case reflect.Slice:
 		slice := reflect.ValueOf(rec.Data)
-		if slice.Len() <= r.Pos {
-			// error!
+		if slice.Len() <= int(r.Index) {
+			text := fmt.Sprintf("position %d is out of range", r.Index)
+			return hash.RecordZero, &ErrConflict{text}
 		}
 
 		// Return an item at the requested position.
-		val := slice.Index(r.Pos)
+		val := slice.Index(int(r.Index))
 		if !val.IsValid() {
-			// error!
+			text := fmt.Sprintf("unexpected value at position %d", r.Index)
+			return hash.RecordZero, &ErrInternal{text}
 		}
 
-		return val.Interface(), error
+		rec.Data = val.Interface()
+		return rec, nil
 	default:
-		// error!
+		text := fmt.Sprintf("%s is not a list", r.Key)
+		return hash.RecordZero, &ErrConflict{text}
 	}
 }
 
@@ -150,31 +136,37 @@ func (r *RequestListItem) Request(h hash.Hash) (interface{}, error) {
 // or requested item is not in a dictionary, an error is returned.
 type RequestDictItem struct {
 	// ID is a request identifier.
-	ID     string
-	Key    string
-	SubKey interface{}
+	ID string
+	// Key is a name of a key.
+	Key string
+	// A key of the dictionary to request.
+	Item interface{}
 }
 
 // Request implements Requester interface, it returns an item from
 // the dictionary.
-func (r *RequestDictItem) Request(h hash.Hash) (Record, error) {
+func (r *RequestDictItem) Process(h hash.Hash) (hash.Record, error) {
 	rec, ok := h.Load(r.Key)
 	if !ok {
-		// error!
+		text := fmt.Sprintf("%s does not exist", r.Key)
+		return hash.RecordZero, &ErrMissing{text}
 	}
 
 	switch reflect.TypeOf(rec.Data).Kind() {
 	case reflect.Map:
 		hashmap := reflect.ValueOf(rec.Data)
-		key := reflect.ValueOf(r.SubKey)
+		key := reflect.ValueOf(r.Item)
 
-		val := hashmap.MapIndex(val)
+		val := hashmap.MapIndex(key)
 		if !val.IsValid() {
-			// error!
+			text := fmt.Sprintf("unexpected value at key %v", r.Item)
+			return hash.RecordZero, &ErrInternal{text}
 		}
 
-		return val.Interface(), error
+		rec.Data = val.Interface()
+		return rec, nil
 	default:
-		// error!
+		text := fmt.Sprintf("%s is not a dictionary", r.Key)
+		return hash.RecordZero, &ErrConflict{text}
 	}
 }

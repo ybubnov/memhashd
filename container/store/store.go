@@ -9,10 +9,10 @@ import (
 )
 
 type Store interface {
-	hash.Hash
+	Serve(r Request) (hash.Record, error)
 }
 
-type Options struct {
+type Config struct {
 	Capacity int
 }
 
@@ -25,10 +25,14 @@ type store struct {
 	worldMu sync.Mutex
 }
 
-func newStore(ops *Options) *store {
+func New(config *Config) Store {
+	return newStore(config)
+}
+
+func newStore(config *Config) *store {
 	return &store{
-		hashMap:     hash.NewUnsafeHash(ops.Capacity),
-		expireHeap:  newTimeHeap(ops.Capacity),
+		hashMap:     hash.NewUnsafeHash(config.Capacity),
+		expireHeap:  newTimeHeap(config.Capacity),
 		expireTimer: new(refreshTimer),
 	}
 }
@@ -125,8 +129,8 @@ func (s *store) Delete(key string) {
 	s.hashMap.Delete(key)
 }
 
-func (s *store) Serve(rw Response, r *Request) {
+func (s *store) Serve(r Request) (hash.Record, error) {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
-
+	return r.Process(s.hashMap)
 }
