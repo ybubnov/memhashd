@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"memhashd/container/hash"
+	"memhashd/system/log"
 )
 
 type Store interface {
+	hash.Hash
 	Serve(r Request) (hash.Record, error)
 }
 
@@ -54,6 +56,7 @@ func (s *store) Load(key string) (rec hash.Record, ok bool) {
 
 	// Remove an expired key to guarantee consistency of the storage.
 	if rec.IsExpired() {
+		log.DebugLogf("store/LOAD", "key %s is expired, deleting", key)
 		s.hashMap.Delete(key)
 		return hash.Record{}, false
 	}
@@ -61,14 +64,14 @@ func (s *store) Load(key string) (rec hash.Record, ok bool) {
 	return rec, ok
 }
 
-func (s *store) Store(key string, rec hash.Record) {
+func (s *store) Store(key string, rec hash.Record) hash.Record {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
 
 	// Store a new record into a storage.
-	s.hashMap.Store(key, rec)
+	rec = s.hashMap.Store(key, rec)
 	if rec.IsPermanent() {
-		return
+		return rec
 	}
 
 	// For non-permanent records, calculate expiration time and schedule
@@ -76,14 +79,14 @@ func (s *store) Store(key string, rec hash.Record) {
 	cutoff := rec.ExpiresAt()
 	heap.Push(s.expireHeap, &timeHeapElement{cutoff, key})
 
-	s.expireTimer.AfterFunc(cutoff, func() {
-		s.deleteAfter(cutoff)
-	})
+	log.DebugLogf("store/STORE",
+		"scheduling next run of timer in %s", cutoff)
+	s.expireTimer.AfterFunc(cutoff, func() { s.deleteAfter(cutoff) })
+	return rec
 }
 
 func (s *store) deleteAfter(cutoff time.Time) {
 	s.DeleteExpiredKeys(cutoff)
-
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
 
@@ -96,6 +99,8 @@ func (s *store) deleteAfter(cutoff time.Time) {
 
 	// Peek next timer form the heap and schedule an expiration timer.
 	elem := s.expireHeap.Peek().(*timeHeapElement)
+	log.DebugLogf("store/DELETE_AFTER",
+		"re-scheduling next run of timer in %s", elem.Time)
 	s.expireTimer.AfterFunc(elem.Time, func() {
 		s.deleteAfter(elem.Time)
 	})
@@ -107,20 +112,27 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
 
+	log.DebugLogf("store/DELETE_EXPIRED_KEYS",
+		"starting deletion of expired keys")
 	for {
 		// Peek the next element and check if the saved record
 		// is already expired, so it has to be removed.
-		next := s.expireHeap.Peek().(*timeHeapElement)
-		if next == nil || next.Time.After(cutoff) {
-			return
+		next, ok := s.expireHeap.Peek().(*timeHeapElement)
+		if !ok || next == nil || next.Time.After(cutoff) {
+			break
 		}
 
-		// Remove a keys from the storage and remove time from
-		// the heap of expiration times.
+		// Remove a keys from the storage and remove time from the heap of
+		// expiration times.
 		key := next.Data.(string)
+		log.DebugLogf("store/DELETE_EXPIRED_KEYS",
+			"deleted expired key `%s`", key)
+
 		s.hashMap.Delete(key)
 		s.expireHeap.Pop()
 	}
+	log.DebugLogf("store/DELETE_EXPIRED_KEYS",
+		"stopped deletion of expired keys")
 }
 
 func (s *store) Delete(key string) {
@@ -130,7 +142,5 @@ func (s *store) Delete(key string) {
 }
 
 func (s *store) Serve(r Request) (hash.Record, error) {
-	s.worldMu.Lock()
-	defer s.worldMu.Unlock()
-	return r.Process(s.hashMap)
+	return r.Process(s)
 }

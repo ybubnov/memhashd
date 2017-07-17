@@ -31,7 +31,7 @@ func (h *timeHeap) Swap(i, j int) {
 
 func (h *timeHeap) Peek() interface{} {
 	if h.Len() != 0 {
-		return h.arr[0]
+		return h.arr[len(h.arr)-1]
 	}
 	return nil
 }
@@ -55,18 +55,19 @@ type refreshTimer struct {
 func (rt *refreshTimer) AfterFunc(t time.Time, fn func()) {
 	// When the planned cutoff is later than a given time, timer has
 	// to be stopped and re-scheduled again.
-	if !rt.cutoff.IsZero() && rt.cutoff.Before(t) {
+	now := time.Now()
+	if !rt.cutoff.IsZero() && rt.cutoff.Before(t) && now.Before(rt.cutoff) {
 		// There is no need to perform a re-scheduling.
 		return
 	}
 
 	// Stop a timer. It does not matter whether it was stopped or not.
 	// If stopped, it should be started again, if running - we have
-	// a closer timepoint, thus can re-start it.
-	if rt.timer != nil && !rt.timer.Stop() {
-		<-rt.timer.C
+	// a closer time point, thus can re-start it.
+	if rt.timer != nil {
+		rt.timer.Stop()
 	}
 
 	rt.cutoff = t
-	rt.timer = time.AfterFunc(t.Sub(time.Now()), fn)
+	rt.timer = time.AfterFunc(t.Sub(now), fn)
 }

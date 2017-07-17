@@ -45,7 +45,7 @@ func (n Nodes) Swap(i, j int) {
 
 type Response struct {
 	Record hash.Record
-	Error  error
+	Node   Node
 }
 
 type Server interface {
@@ -141,7 +141,7 @@ func (s *server) joinN(nodes Nodes) error {
 			}
 
 			// Append successfully connected node to the list of nodes.
-			log.InfoLogf("SERVER/JOIN", "connected to %s", n.Addr)
+			log.InfoLogf("server/JOIN", "connected to %s", n.Addr)
 
 			mu.Lock()
 			defer mu.Unlock()
@@ -159,7 +159,7 @@ func (s *server) joinN(nodes Nodes) error {
 		for _, node := range s.nodes {
 			defer func(n Node) {
 				n.Conn.Close()
-				log.DebugLogf("SERVER/JOIN",
+				log.DebugLogf("server/JOIN",
 					"connection to %s closed", n.Addr)
 			}(node)
 		}
@@ -171,10 +171,10 @@ func (s *server) joinN(nodes Nodes) error {
 }
 
 func (s *server) join(node *Node) (net.Conn, error) {
-	log.DebugLogf("SERVER/JOIN", "dialing %s node", node.Addr)
+	log.DebugLogf("server/JOIN", "dialing %s node", node.Addr)
 	conn, err := netutil.Dial(node.Addr.String(), nil)
 	if err != nil {
-		log.ErrorLogf("SERVER/JOIN", "dialing of %s failed, %s",
+		log.ErrorLogf("server/JOIN", "dialing of %s failed, %s",
 			node.Addr, err)
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (s *server) join(node *Node) (net.Conn, error) {
 func (s *server) listenAndServe() error {
 	host, port, err := net.SplitHostPort(s.laddr.String())
 	if err != nil {
-		log.ErrorLogf("SERVER/LISTEN_AND_SERVE",
+		log.ErrorLogf("server/LISTEN_AND_SERVE",
 			"failed to parse address: %s", err)
 		return err
 	}
@@ -197,20 +197,22 @@ func (s *server) listenAndServe() error {
 	laddr := &net.TCPAddr{IP: net.ParseIP(host), Port: int(portNo)}
 	s.ln, err = net.ListenTCP("tcp", laddr)
 	if err != nil {
-		log.ErrorLogf("SERVER/LISTEN_AND_SERVE",
+		log.ErrorLogf("server/LISTEN_AND_SERVE",
 			"failed to start listener: %s", err)
 		return err
 	}
 
+	log.InfoLogf("server/LISTEN_AND_SERVE",
+		"started at %s", s.laddr)
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			log.ErrorLogf("SERVER/LISTEN_AND_SERVE",
+			log.ErrorLogf("server/LISTEN_AND_SERVE",
 				"failed to accent a new connection: %s", err)
 			continue
 		}
 
-		log.DebugLogf("SERVER/LISTEN_AND_SERVE",
+		log.DebugLogf("server/LISTEN_AND_SERVE",
 			"accepted remote connection: %s", conn.RemoteAddr())
 		go s.handle(conn)
 	}
@@ -223,8 +225,8 @@ func (s *server) handle(conn net.Conn) {
 	// Close connection when the handling is finished.
 	defer conn.Close()
 
-	log.DebugLogf("SERVER/HANDLE",
-		"closing remove connection: %s", conn.RemoteAddr())
+	log.DebugLogf("server/HANDLE",
+		"closing remote connection: %s", conn.RemoteAddr())
 }
 
 func (s *server) Start() (err error) {
@@ -259,7 +261,7 @@ func (s *server) Stop() error {
 				return
 			}
 			n.Conn.Close()
-			log.DebugLogf("SERVER/STOP",
+			log.DebugLogf("server/STOP",
 				"connection to %s closed", n.Addr)
 		}(node)
 	}
@@ -272,19 +274,21 @@ func (s *server) Stop() error {
 }
 
 func (s *server) Do(ctx context.Context, req store.Request) (Response, error) {
+	log.DebugLogf("server/PROCESSING_REQUEST",
+		"started processing request %s", req)
 	// Find a nodes, that is in charge of handling an arrived request.
-	elem := s.ring.Find(ring.StringHasher(req.ID()))
+	elem := s.ring.Find(ring.StringHasher(req.Hash()))
 	index := elem.Value.(int)
 
 	node := s.nodes[index]
-	if node.Conn == nil {
+	if node.Conn == nil || req.Hash() == "" {
 		// Handle a local call.
 		rec, err := s.store.Serve(req)
 		if err != nil {
-			log.ErrorLogf("SERVER/DO", "request %s failed, %s",
-				req.ID(), err)
+			log.ErrorLogf("server/PROCESSING_REQUEST",
+				"%s failed with %s", req, err)
 		}
-		return Response{Record: rec}, err
+		return Response{Record: rec, Node: node}, err
 	} else {
 		// Handle a redirect request.
 	}

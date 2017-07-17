@@ -1,56 +1,312 @@
 package httprest
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"time"
 
+	"memhashd/client"
+	"memhashd/container/store"
 	"memhashd/httprest/httputil"
 	"memhashd/server"
+	"memhashd/system/log"
+	"memhashd/system/uuid"
 )
 
 type Server struct {
 	mux    *httputil.ServeMux
 	server server.Server
+	ctx    context.Context
 }
 
 type Config struct {
-	Server server.Server
+	Server  server.Server
+	Context context.Context
 }
 
-type Request struct {
-	Action string
+func (c *Config) context() context.Context {
+	if c.Context != nil {
+		return c.Context
+	}
+	return context.Background()
 }
 
 func NewServer(config *Config) *Server {
 	s := &Server{
 		mux:    httputil.NewServeMux(),
 		server: config.Server,
+		ctx:    config.context(),
 	}
 
 	s.mux.HandleFunc("GET", "/v1/keys", s.keysHandler)
-	s.mux.HandleFunc("GET", "/v1/keys/{key}", s.keyHandler)
+	s.mux.HandleFunc("GET", "/v1/keys/{key}", s.loadHandler)
+	s.mux.HandleFunc("GET", "/v1/keys/{key}/index", s.indexHandler)
+	s.mux.HandleFunc("GET", "/v1/keys/{key}/item", s.itemHandler)
 	s.mux.HandleFunc("PUT", "/v1/keys/{key}", s.storeHandler)
 	s.mux.HandleFunc("DELETE", "/v1/keys/{key}", s.deleteHandler)
-
 	return s
 }
 
+func (s *Server) readReq(rw http.ResponseWriter, r *http.Request,
+	val interface{}) error {
+
+	rf, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return err
+	}
+	if err := rf.Read(r, val); err != nil {
+		const text = "failed to read request body, %s"
+		log.ErrorLogf("server/READ_REQUEST", text, err)
+
+		body := client.Error{fmt.Sprintf(text, err)}
+		wf.Write(rw, body, http.StatusBadRequest)
+		return err
+	}
+	return nil
+}
+
+func (s *Server) statusOf(err error) int {
+	switch err.(type) {
+	case *store.ErrInternal:
+		return http.StatusInternalServerError
+	case *store.ErrConflict:
+		return http.StatusConflict
+	case *store.ErrMissing:
+		return http.StatusNotFound
+	}
+
+	return http.StatusInternalServerError
+}
+
+// metaOf returns a record metadata in a client format.
+func (s *Server) metaOf(resp *server.Response) client.Meta {
+	return client.Meta{
+		Index:      resp.Record.Meta.Index,
+		ExpireTime: client.Duration(resp.Record.Meta.ExpireTime),
+		AccessedAt: resp.Record.Meta.AccessedAt,
+		CreatedAt:  resp.Record.Meta.CreatedAt,
+		UpdatedAt:  resp.Record.Meta.UpdatedAt,
+	}
+}
+
+// nodeOf return a node information in a client format.
+func (s *Server) nodeOf(resp *server.Response) client.Node {
+	return client.Node{ID: s.server.ID(), Addr: resp.Node.Addr.String()}
+}
+
+// keysHandler returns a list of keys stored on all nodes in a cluster.
 func (s *Server) keysHandler(rw http.ResponseWriter, r *http.Request) {
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	req := &store.RequestKeys{ID: uuid.New()}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to load keys, %s"
+		body := client.Error{fmt.Sprintf(text, err)}
+
+		log.ErrorLogf("server/KEYS_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	keys, ok := resp.Record.Data.([]string)
+	if !ok {
+		const text = "invalid type of keys"
+		log.ErrorLogf("server/KEYS_HANDLER", text)
+
+		body := client.Error{text}
+		wf.Write(rw, body, http.StatusInternalServerError)
+		return
+	}
+
+	wf.Write(rw, keys, http.StatusOK)
 }
 
-func (s *Server) keyHandler(rw http.ResponseWriter, r *http.Request) {
-	//key := httputil.Param(r, "key")
-}
-
+// loadHandler loads a requested data from the store (depending on
+// requested action, it can return a partial data, like item in a list
+// or dictionary).
 func (s *Server) loadHandler(rw http.ResponseWriter, r *http.Request) {
-	//key := httputil.Param(r, "key")
+	key := httputil.Param(r, "key")
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	// Create a new load request, assign an identifier to it, for easy
+	// tracking in the logs of the application.
+	req := &store.RequestLoad{ID: uuid.New(), Key: key}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to load %s key, %s"
+		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+
+		log.ErrorLogf("server/LOAD_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	// Construct a response of a successful request processing and
+	// return it back to the client.
+	cresp := client.Response{
+		Action: "load",
+		Data:   resp.Record.Data,
+		Node:   s.nodeOf(&resp),
+		Meta:   s.metaOf(&resp),
+	}
+	wf.Write(rw, cresp, http.StatusOK)
 }
 
+// storeHandler stores a given record in a key-value storage. It
+// returns a node where a record was created, creation and update time.
 func (s *Server) storeHandler(rw http.ResponseWriter, r *http.Request) {
-	//key := httputil.Param(r, "key")
+	key := httputil.Param(r, "key")
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	var opts client.StoreOptions
+	if err := s.readReq(rw, r, &opts); err != nil {
+		return
+	}
+
+	req := &store.RequestStore{
+		ID:  uuid.New(),
+		Key: key, Data: opts.Data,
+		ExpireTime: time.Duration(opts.ExpireTime),
+	}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to store %s key, %s"
+		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+
+		log.ErrorLogf("server/STORE_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	cresp := client.Response{
+		Action: "store",
+		Data:   resp.Record.Data,
+		Node:   s.nodeOf(&resp),
+		Meta:   s.metaOf(&resp),
+	}
+	wf.Write(rw, cresp, http.StatusOK)
 }
 
+// deleteHandler deletes the requested key from the storage. It returns
+// a node where a record was removed. Return does not return an error if
+// record does not exist.
 func (s *Server) deleteHandler(rw http.ResponseWriter, r *http.Request) {
-	//key := httputil.Param(r, "key")
+	key := httputil.Param(r, "key")
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	// Create a new delete request, assign an identifier to it for
+	// tracking.
+	req := &store.RequestDelete{ID: uuid.New(), Key: key}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to delete %s key, %s"
+		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+
+		log.ErrorLogf("server/DELETE_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	cresp := client.Response{
+		Action: "delete",
+		Node:   s.nodeOf(&resp),
+		Meta:   s.metaOf(&resp),
+	}
+	wf.Write(rw, cresp, http.StatusOK)
+}
+
+// indexHandler returns a value at the given position. Method returns error
+// when index is out of array bounds or requested key is not an array.
+func (s *Server) indexHandler(rw http.ResponseWriter, r *http.Request) {
+	key := httputil.Param(r, "key")
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	// Parse a requested parameters of the list index function.
+	var opts client.ListIndexOptions
+	if err := s.readReq(rw, r, &opts); err != nil {
+		return
+	}
+
+	req := &store.RequestListIndex{
+		ID: uuid.New(), Key: key, Index: opts.Index,
+	}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to load value, %s"
+		body := client.Error{fmt.Sprintf(text, err)}
+
+		log.ErrorLogf("server/INDEX_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	cresp := client.Response{
+		Action: "index",
+		Data:   resp.Record.Data,
+		Node:   s.nodeOf(&resp),
+		Meta:   s.metaOf(&resp),
+	}
+	wf.Write(rw, cresp, http.StatusOK)
+}
+
+// itemHandler returns an item in the dictionary stored at a specified
+// key. Method returns an error, when the target type is not a dictionary.
+func (s *Server) itemHandler(rw http.ResponseWriter, r *http.Request) {
+	key := httputil.Param(r, "key")
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+
+	var opts client.DictItemOptions
+	if err := s.readReq(rw, r, &opts); err != nil {
+		return
+	}
+
+	// Retrieve an item of the given dictionary.
+	req := &store.RequestDictItem{
+		ID: uuid.New(), Key: key, Item: opts.Item,
+	}
+	resp, err := s.server.Do(s.ctx, req)
+	if err != nil {
+		const text = "unable to load value, %s"
+		body := client.Error{fmt.Sprintf(text, err)}
+
+		log.ErrorLogf("server/ITEM_HANDLER",
+			"%s failed, %s", req.ID, err)
+		wf.Write(rw, body, s.statusOf(err))
+		return
+	}
+
+	cresp := client.Response{
+		Action: "item",
+		Data:   resp.Record.Data,
+		Node:   s.nodeOf(&resp),
+		Meta:   s.metaOf(&resp),
+	}
+	wf.Write(rw, cresp, http.StatusOK)
 }
 
 func (s *Server) ListenAndServe() error {

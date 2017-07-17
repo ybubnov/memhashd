@@ -1,16 +1,15 @@
-package format
+package httputil
 
 import (
 	"encoding/json"
 	"net/http"
-
-	"memhashd/httprest/httputil"
 )
 
 func init() {
 	// Register formatter for application/json and */* types.
-	Register(httputil.TypeApplicationJSON, &JSONFormatter{})
-	Register(httputil.TypeAny, &JSONFormatter{})
+	Register(TypeApplicationJSON, &JSONFormatter{})
+	Register(TypeAny, &JSONFormatter{})
+	Register("", &JSONFormatter{})
 }
 
 // JSONFormatter formats data into JSON.
@@ -24,7 +23,7 @@ func (f *JSONFormatter) Read(r *http.Request, v interface{}) error {
 
 // Write implements Formatter interface.
 func (f *JSONFormatter) Write(w http.ResponseWriter, v interface{}, status int) error {
-	w.Header().Set(httputil.HeaderContentType, httputil.TypeApplicationJSON)
+	w.Header().Set(HeaderContentType, TypeApplicationJSON)
 	w.WriteHeader(status)
 
 	if v == nil {

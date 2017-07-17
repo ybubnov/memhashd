@@ -65,8 +65,8 @@ func (r *Record) ExpiresAt() time.Time {
 
 type Hash interface {
 	Keys() []string
-	Load(key string) (rec Record, ok bool)
-	Store(key string, rec Record)
+	Load(key string) (Record, bool)
+	Store(key string, rec Record) Record
 	Delete(key string)
 }
 
@@ -131,7 +131,7 @@ func (h *unsafeHash) Load(key string) (rec Record, ok bool) {
 }
 
 // Store implements Hash interface.
-func (h *unsafeHash) Store(key string, rec Record) {
+func (h *unsafeHash) Store(key string, rec Record) Record {
 	prevrec, ok := h.records[key]
 	if !ok {
 		// Create a new record, when it is missing in the hash table.
@@ -150,6 +150,7 @@ func (h *unsafeHash) Store(key string, rec Record) {
 	prevrec.Data = rec.Data
 
 	h.records[key] = prevrec
+	return prevrec
 }
 
 // Delete implements Hash interface.
