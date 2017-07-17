@@ -2,12 +2,16 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"memhashd/container/hash"
 	"memhashd/container/ring"
@@ -20,13 +24,10 @@ import (
 type Node struct {
 	Addr net.Addr
 	Conn net.Conn
+	mu   sync.Mutex
 }
 
-func (n *Node) redirect(r store.Request) error {
-	return nil
-}
-
-type Nodes []Node
+type Nodes []*Node
 
 // Len implements sort.Interface interface.
 func (n Nodes) Len() int {
@@ -76,6 +77,10 @@ type Config struct {
 	// should be greater than zero.
 	NumPartitions int
 
+	// NumRetries defines an amount of retries to the remove shards
+	// before giving up on attempts to establish connections.
+	NumRetries int
+
 	// TLSEnable enables TLS, when set to true and disables otherwise.
 	TLSEnable bool
 
@@ -91,7 +96,8 @@ type server struct {
 	laddr net.Addr
 	ln    net.Listener
 
-	nodes Nodes
+	nodes   Nodes
+	retries int
 
 	ring  ring.Ring
 	store store.Store
@@ -99,9 +105,11 @@ type server struct {
 
 func newServer(config *Config) *server {
 	s := &server{
-		id:    uuid.New(),
-		laddr: config.LocalAddr,
-		ring:  ring.New(config.NumPartitions),
+		id:      uuid.New(),
+		nodes:   config.Nodes,
+		laddr:   config.LocalAddr,
+		ring:    ring.New(config.NumPartitions),
+		retries: config.NumRetries,
 		store: store.New(&store.Config{
 			Capacity: config.NumPartitions,
 		}),
@@ -126,13 +134,14 @@ func (s *server) joinN(nodes Nodes) error {
 	)
 
 	for _, node := range nodes {
-		go func(n Node) {
+		wg.Add(1)
+		go func(n *Node) {
 			defer wg.Done()
 			// Try to establish a connection to the remote host.
 			//
 			// If an attempt fails, record that fact into an error list,
 			// so the rest of connection will be terminated after that.
-			conn, err := s.join(&n)
+			conn, err := s.join(n)
 			if err != nil {
 				mu.Lock()
 				defer mu.Unlock()
@@ -145,7 +154,7 @@ func (s *server) joinN(nodes Nodes) error {
 
 			mu.Lock()
 			defer mu.Unlock()
-			s.nodes = append(s.nodes, Node{Addr: n.Addr, Conn: conn})
+			s.nodes = append(s.nodes, &Node{Addr: n.Addr, Conn: conn})
 		}(node)
 	}
 
@@ -157,8 +166,10 @@ func (s *server) joinN(nodes Nodes) error {
 	// of connections.
 	if errors != nil {
 		for _, node := range s.nodes {
-			defer func(n Node) {
-				n.Conn.Close()
+			defer func(n *Node) {
+				if n.Conn != nil {
+					n.Conn.Close()
+				}
 				log.DebugLogf("server/JOIN",
 					"connection to %s closed", n.Addr)
 			}(node)
@@ -171,14 +182,29 @@ func (s *server) joinN(nodes Nodes) error {
 }
 
 func (s *server) join(node *Node) (net.Conn, error) {
-	log.DebugLogf("server/JOIN", "dialing %s node", node.Addr)
-	conn, err := netutil.Dial(node.Addr.String(), nil)
-	if err != nil {
-		log.ErrorLogf("server/JOIN", "dialing of %s failed, %s",
-			node.Addr, err)
-		return nil, err
+	var (
+		retries int
+		backoff time.Duration = time.Second
+	)
+
+	for retries <= s.retries {
+		log.DebugLogf("server/JOIN", "dialing %s node", node.Addr)
+		conn, err := netutil.Dial(node.Addr.String(), nil)
+		if err == nil {
+			return conn, nil
+		}
+
+		if retries < s.retries {
+			const text = "dialing of %s failed, %s, next attempt in %s"
+			log.ErrorLogf("server/JOIN", text, node.Addr, err, backoff)
+			time.Sleep(backoff)
+		}
+		backoff *= 2
+		retries++
 	}
-	return conn, nil
+
+	const text = "server: all connection attempts failed to %s"
+	return nil, fmt.Errorf(text, node.Addr)
 }
 
 func (s *server) listenAndServe() error {
@@ -225,29 +251,54 @@ func (s *server) handle(conn net.Conn) {
 	// Close connection when the handling is finished.
 	defer conn.Close()
 
+	for {
+		var req store.Request
+		if err := s.readWire(conn, &req); err != nil {
+			log.ErrorLogf("server/HANDLE",
+				"reading of request failed with %s", err)
+			break
+		}
+		resp, err := s.Do(context.Background(), req)
+		if err != nil {
+			log.ErrorLogf("server/HANDLE",
+				"processing of request %s failed with %s", req, err)
+			break
+		}
+		if err := s.writeWire(conn, resp); err != nil {
+			log.ErrorLogf("server/HANDLE",
+				"submission of response %s failed with %s", req, err)
+			break
+		}
+	}
+
 	log.DebugLogf("server/HANDLE",
 		"closing remote connection: %s", conn.RemoteAddr())
 }
 
 func (s *server) Start() (err error) {
+	// Start listening for incoming requests from the other nodes.
+	go func() {
+		if err := s.listenAndServe(); err != nil {
+			log.FatalLogf("server/START",
+				"failed to start a server, %s", err)
+		}
+	}()
+
 	if err = s.joinN(s.nodes); err != nil {
+		log.ErrorLogf("server/START",
+			"failed to setup connections to shards, %s", err)
 		return err
 	}
 
 	// Add a self nodes with a nil-connection. Sort all nodes in a
 	// lexicographical order, so on each node the order will be
 	// preserved.
-	s.nodes = append(s.nodes, Node{Addr: s.laddr})
+	s.nodes = append(s.nodes, &Node{Addr: s.laddr})
 	sort.Sort(s.nodes)
 
 	// Insert a new nodes into a sharding ring.
 	for ii := 0; ii < len(s.nodes); ii++ {
 		s.ring.Insert(&ring.Element{Value: ii})
-	}
-
-	// Start listening for incoming requests from the other nodes.
-	if err = s.listenAndServe(); err != nil {
-		return err
 	}
 
 	return nil
@@ -256,7 +307,7 @@ func (s *server) Start() (err error) {
 func (s *server) Stop() error {
 	// Close all connections to the neighbors, to clean-up resources.
 	for _, node := range s.nodes {
-		defer func(n Node) {
+		defer func(n *Node) {
 			if n.Conn == nil {
 				return
 			}
@@ -265,12 +316,64 @@ func (s *server) Stop() error {
 				"connection to %s closed", n.Addr)
 		}(node)
 	}
-
 	if s.ln != nil {
 		s.ln.Close()
 	}
-
 	return nil
+}
+
+func (s *server) readWire(r io.Reader, val interface{}) error {
+	var num uint64
+	var n int
+	err := binary.Read(r, binary.BigEndian, &num)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, int(num))
+	for uint64(n) < num {
+		nn, err := r.Read(buf[n:])
+		if err != nil {
+			return err
+		}
+		n += nn
+	}
+	fmt.Println("!!!", string(buf))
+	return json.Unmarshal(buf, val)
+}
+
+func (s *server) writeWire(w io.Writer, val interface{}) error {
+	// Marshal request to deliver it to the remote host.
+	b, err := json.Marshal(val)
+	if err != nil {
+		return err
+	}
+	num := uint64(len(b))
+	err = binary.Write(w, binary.BigEndian, num)
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(b); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *server) roundTrip(node *Node, req store.Request) (Response, error) {
+	var resp Response
+	node.mu.Lock()
+	defer node.mu.Unlock()
+
+	if err := s.writeWire(node.Conn, req); err != nil {
+		log.ErrorLogf("server/ROUND_TRIP",
+			"failed to submit request: %s", err)
+		return Response{}, err
+	}
+	if err := s.readWire(node.Conn, &resp); err != nil {
+		log.ErrorLogf("server/ROUND_TRIP",
+			"failed to retrieve request: %s", err)
+		return Response{}, err
+	}
+	return resp, nil
 }
 
 func (s *server) Do(ctx context.Context, req store.Request) (Response, error) {
@@ -287,11 +390,16 @@ func (s *server) Do(ctx context.Context, req store.Request) (Response, error) {
 		if err != nil {
 			log.ErrorLogf("server/PROCESSING_REQUEST",
 				"%s failed with %s", req, err)
+			return Response{}, err
 		}
-		return Response{Record: rec, Node: node}, err
-	} else {
-		// Handle a redirect request.
+		return Response{Record: rec, Node: *node}, err
 	}
 
-	panic("not implemented yet")
+	resp, err := s.roundTrip(node, req)
+	if err != nil {
+		log.ErrorLogf("service/PROCESSING_REQUEST",
+			"redirect of %s failed with %s", req, err)
+		return Response{}, err
+	}
+	return resp, nil
 }

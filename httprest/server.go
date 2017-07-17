@@ -3,6 +3,7 @@ package httprest
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -15,14 +16,16 @@ import (
 )
 
 type Server struct {
+	laddr  net.Addr
 	mux    *httputil.ServeMux
 	server server.Server
 	ctx    context.Context
 }
 
 type Config struct {
-	Server  server.Server
-	Context context.Context
+	Server    server.Server
+	LocalAddr net.Addr
+	Context   context.Context
 }
 
 func (c *Config) context() context.Context {
@@ -34,6 +37,7 @@ func (c *Config) context() context.Context {
 
 func NewServer(config *Config) *Server {
 	s := &Server{
+		laddr:  config.LocalAddr,
 		mux:    httputil.NewServeMux(),
 		server: config.Server,
 		ctx:    config.context(),
@@ -310,6 +314,5 @@ func (s *Server) itemHandler(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ListenAndServe() error {
-	http.ListenAndServe(":8080", s.mux)
-	return nil
+	return http.ListenAndServe(s.laddr.String(), s.mux)
 }
