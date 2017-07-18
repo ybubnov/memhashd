@@ -7,6 +7,21 @@ import (
 	"memhashd/container/hash"
 )
 
+func TestMakeRequest(t *testing.T) {
+	r, err := MakeRequest(ActionStore)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if _, ok := r.(*RequestStore); !ok {
+		t.Fatalf("request of wrong type was created")
+	}
+
+	_, err = MakeRequest("reload")
+	if err == nil || err.Error() != "store: invalid action reload" {
+		t.Fatalf("expected error on invalid action")
+	}
+}
+
 func TestRequestKeys(t *testing.T) {
 	s := newStore(&Config{16})
 	s.Store("1", hash.Record{Data: 1})
@@ -74,6 +89,21 @@ func TestRequestLoad(t *testing.T) {
 }
 
 func TestRequestDelete(t *testing.T) {
+	s := newStore(&Config{1})
+	req := &RequestDelete{Key: "1"}
+	_, err := req.Process(s)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
+	s.Store("1", hash.Record{Data: 1})
+	_, err = req.Process(s)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if _, ok := s.Load("1"); ok {
+		t.Fatalf("record should be removed from the store")
+	}
 }
 
 func TestRequestListIndex(t *testing.T) {
@@ -91,6 +121,9 @@ func TestRequestListIndex(t *testing.T) {
 	}
 	if rec.Data.(int) != 3 {
 		t.Fatalf("invalid value returned: %v", rec.Data)
+	}
+	if req.Action() != ActionListIndex {
+		t.Fatalf("invalid request action: %s", req.Action())
 	}
 
 	req = &RequestListIndex{Key: "1", Index: 4}
@@ -121,6 +154,9 @@ func TestRequestDictItem(t *testing.T) {
 	}
 	if rec.Data.(int) != 4 {
 		t.Fatalf("invalid value returned: %v", rec.Data)
+	}
+	if req.Action() != ActionDictItem {
+		t.Fatalf("invalid request action: %s", req.Action())
 	}
 
 	req = &RequestDictItem{Key: "2", Item: "a"}

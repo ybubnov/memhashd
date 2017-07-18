@@ -5,9 +5,11 @@ import (
 )
 
 var (
+	// RecordZero is an empty instance of the hash record.
 	RecordZero Record
 )
 
+// Meta is a metadata about the record in a hash.
 type Meta struct {
 	// Index defines a record serial number. Each time the record
 	// data is updated an index value is incremented.
@@ -63,10 +65,18 @@ func (r *Record) ExpiresAt() time.Time {
 	return r.Meta.CreatedAt.Add(r.Meta.ExpireTime)
 }
 
+// Hash describes types that implement hashing table.
 type Hash interface {
+	// Keys returns a list of keys.
 	Keys() []string
+
+	// Load returns a record persisted under the given key.
 	Load(key string) (Record, bool)
+
+	// Store persists the record under the given key.
 	Store(key string, rec Record) Record
+
+	// Delete removes the record stored under the given key.
 	Delete(key string)
 }
 
@@ -86,6 +96,8 @@ type unsafeHash struct {
 	dirty bool
 }
 
+// NewUnsafeHash creates a new instance of the hash. This hash should
+// not be used by multiple go-routines simultaneously.
 func NewUnsafeHash(cap int) Hash {
 	return newUnsafeHash(cap)
 }
