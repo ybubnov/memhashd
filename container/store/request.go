@@ -8,11 +8,82 @@ import (
 	"memhashd/container/hash"
 )
 
+const (
+	// ActionKeys is an action to retrieve a list of keys.
+	ActionKeys = "keys"
+
+	// ActionLoad is an actions to load a record from store.
+	ActionLoad = "load"
+
+	// ActionStore is an action to persist record in a store.
+	ActionStore = "store"
+
+	// ActionDelete is an action to delete a record from a store.
+	ActionDelete = "delete"
+
+	// ActionListIndex is an action to access element of a list.
+	ActionListIndex = "index"
+
+	// ActionDictItem is an action to access element of a dict.
+	ActionDictItem = "item"
+)
+
+// requestMap stores a mapping of actions to the request constructors.
+var requestMap = map[string]RequestMaker{
+	ActionKeys:      requestMakerOf(RequestKeys{}),
+	ActionLoad:      requestMakerOf(RequestLoad{}),
+	ActionStore:     requestMakerOf(RequestStore{}),
+	ActionDelete:    requestMakerOf(RequestDelete{}),
+	ActionListIndex: requestMakerOf(RequestListIndex{}),
+	ActionDictItem:  requestMakerOf(RequestDictItem{}),
+}
+
+// MakeRequest creates a new instance of the request by an action name.
+// If action is undefined, an error is returned to the caller.
+func MakeRequest(action string) (Request, error) {
+	maker, ok := requestMap[action]
+	if !ok {
+		err := fmt.Errorf("store: invalid action %s", action)
+		return nil, err
+	}
+	return maker.MakeRequest(), nil
+}
+
+// RequestMaker describes types for creation of new instances of the
+// Request.
+type RequestMaker interface {
+	MakeRequest() Request
+}
+
+// RequestMakerFunc is a function adapter for RequestMaker interface.
+type RequestMakerFunc func() Request
+
+// MakeRequest implements RequestMaker interface.
+func (fn RequestMakerFunc) MakeRequest() Request {
+	return fn()
+}
+
+func requestMakerOf(v interface{}) RequestMaker {
+	valueType := reflect.TypeOf(v)
+	return RequestMakerFunc(func() Request {
+		value := reflect.New(valueType)
+		return value.Interface().(Request)
+	})
+}
+
+// Request describes types for requesting data from a hash table.
 type Request interface {
 	fmt.Stringer
 
+	// Action returns a string representation of the request action.
+	Action() string
+
+	// Hash returns a key of the request. It will be used to redirect
+	// a request to the different node of the cluster, if necessary.
 	Hash() string
 
+	// Process is used to process a request and retrieve requested
+	// information from the store.
 	Process(hash.Hash) (hash.Record, error)
 }
 
@@ -21,6 +92,11 @@ type Request interface {
 type RequestKeys struct {
 	// ID is a request identifier.
 	ID string
+}
+
+// Action implements Request interface.
+func (r *RequestKeys) Action() string {
+	return ActionKeys
 }
 
 // Hash implements Request interface. Hash for keys request is always
@@ -53,7 +129,12 @@ type RequestStore struct {
 	// Key is a key used to store an element in a store.
 	Key string
 	// Data is a for the given key.
-	Data interface{} `json:"data"`
+	Data interface{}
+}
+
+// Action implements Request interface.
+func (r *RequestStore) Action() string {
+	return ActionStore
 }
 
 // Hash implements Request interface.
@@ -87,6 +168,11 @@ type RequestLoad struct {
 	Key string
 }
 
+// Action implements Request interface.
+func (r *RequestLoad) Action() string {
+	return ActionLoad
+}
+
 // Hash implements Request interface.
 func (r *RequestLoad) Hash() string {
 	return r.Key
@@ -118,6 +204,11 @@ type RequestDelete struct {
 	Key string
 }
 
+// Action implements Request interface.
+func (r *RequestDelete) Action() string {
+	return ActionDelete
+}
+
 // Hash implements Request interface.
 func (r *RequestDelete) Hash() string {
 	return r.Key
@@ -145,6 +236,11 @@ type RequestListIndex struct {
 	Key string
 	// Index is a position in a list.
 	Index uint64
+}
+
+// Action implements Request interface.
+func (r *RequestListIndex) Action() string {
+	return ActionListIndex
 }
 
 // Hash implements Request interface.
@@ -200,6 +296,11 @@ type RequestDictItem struct {
 	Key string
 	// A key of the dictionary to request.
 	Item interface{}
+}
+
+// Action implements Request interface.
+func (r *RequestDictItem) Action() string {
+	return ActionDictItem
 }
 
 // Hash implements Request interface.

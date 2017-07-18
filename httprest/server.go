@@ -70,19 +70,6 @@ func (s *Server) readReq(rw http.ResponseWriter, r *http.Request,
 	return nil
 }
 
-func (s *Server) statusOf(err error) int {
-	switch err.(type) {
-	case *store.ErrInternal:
-		return http.StatusInternalServerError
-	case *store.ErrConflict:
-		return http.StatusConflict
-	case *store.ErrMissing:
-		return http.StatusNotFound
-	}
-
-	return http.StatusInternalServerError
-}
-
 // metaOf returns a record metadata in a client format.
 func (s *Server) metaOf(resp *server.Response) client.Meta {
 	return client.Meta{
@@ -107,14 +94,14 @@ func (s *Server) keysHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	req := &store.RequestKeys{ID: uuid.New()}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to load keys, %s"
 		body := client.Error{fmt.Sprintf(text, err)}
 
 		log.ErrorLogf("server/KEYS_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 
@@ -144,14 +131,14 @@ func (s *Server) loadHandler(rw http.ResponseWriter, r *http.Request) {
 	// Create a new load request, assign an identifier to it, for easy
 	// tracking in the logs of the application.
 	req := &store.RequestLoad{ID: uuid.New(), Key: key}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to load %s key, %s"
-		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+		body := client.Error{fmt.Sprintf(text, req.Key, resp.Err())}
 
 		log.ErrorLogf("server/LOAD_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 
@@ -185,14 +172,14 @@ func (s *Server) storeHandler(rw http.ResponseWriter, r *http.Request) {
 		Key: key, Data: opts.Data,
 		ExpireTime: time.Duration(opts.ExpireTime),
 	}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to store %s key, %s"
-		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+		body := client.Error{fmt.Sprintf(text, req.Key, resp.Err())}
 
 		log.ErrorLogf("server/STORE_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 
@@ -218,14 +205,14 @@ func (s *Server) deleteHandler(rw http.ResponseWriter, r *http.Request) {
 	// Create a new delete request, assign an identifier to it for
 	// tracking.
 	req := &store.RequestDelete{ID: uuid.New(), Key: key}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to delete %s key, %s"
-		body := client.Error{fmt.Sprintf(text, req.Key, err)}
+		body := client.Error{fmt.Sprintf(text, req.Key, resp.Err())}
 
 		log.ErrorLogf("server/DELETE_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 
@@ -255,14 +242,14 @@ func (s *Server) indexHandler(rw http.ResponseWriter, r *http.Request) {
 	req := &store.RequestListIndex{
 		ID: uuid.New(), Key: key, Index: opts.Index,
 	}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to load value, %s"
-		body := client.Error{fmt.Sprintf(text, err)}
+		body := client.Error{fmt.Sprintf(text, resp.Err())}
 
 		log.ErrorLogf("server/INDEX_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 
@@ -293,14 +280,14 @@ func (s *Server) itemHandler(rw http.ResponseWriter, r *http.Request) {
 	req := &store.RequestDictItem{
 		ID: uuid.New(), Key: key, Item: opts.Item,
 	}
-	resp, err := s.server.Do(s.ctx, req)
-	if err != nil {
+	resp := s.server.Do(s.ctx, req)
+	if resp.Err() != nil {
 		const text = "unable to load value, %s"
-		body := client.Error{fmt.Sprintf(text, err)}
+		body := client.Error{fmt.Sprintf(text, resp.Err())}
 
 		log.ErrorLogf("server/ITEM_HANDLER",
-			"%s failed, %s", req.ID, err)
-		wf.Write(rw, body, s.statusOf(err))
+			"%s failed, %s", req.ID, resp.Err())
+		wf.Write(rw, body, resp.Status)
 		return
 	}
 

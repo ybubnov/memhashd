@@ -14,12 +14,12 @@ var (
 )
 
 func TestRecordIsExpired(t *testing.T) {
-	r1 := Record{ExpireTime: 0}
+	r1 := Record{Meta: Meta{ExpireTime: 0}}
 	if r1.IsExpired() {
 		t.Fatalf("record should never expire")
 	}
 
-	r2 := Record{ExpireTime: 1 * time.Nanosecond}
+	r2 := Record{Meta: Meta{ExpireTime: 1 * time.Nanosecond}}
 	time.Sleep(10 * time.Millisecond)
 
 	if !r2.IsExpired() {
@@ -47,17 +47,14 @@ func TestUnsafeHashStore(t *testing.T) {
 		if !ok {
 			t.Fatalf("key `%s` is expected to be in hash table", tt.Key)
 		}
-
 		if !reflect.DeepEqual(tt.Before, rec.Data) {
 			t.Fatalf("value for `%s` must be `%v`, got `%v`",
 				tt.Key, tt.Before, rec.Data)
 		}
-
-		if rec.CreatedAt.IsZero() {
+		if rec.Meta.CreatedAt.IsZero() {
 			t.Fatalf("created at time for `%s` must be non-zero", tt.Key)
 		}
-
-		if rec.Index != 1 {
+		if rec.Meta.Index != 1 {
 			t.Fatalf("index for `%s` must be equal to 1", tt.Key)
 		}
 
@@ -68,8 +65,7 @@ func TestUnsafeHashStore(t *testing.T) {
 			t.Fatalf("value for `%s` must be `%v`, got `%v`",
 				tt.Key, tt.After, rec.Data)
 		}
-
-		if rec.UpdatedAt.IsZero() {
+		if rec.Meta.UpdatedAt.IsZero() {
 			t.Fatalf("updated at time for `%s` must be non-zero", tt.Key)
 		}
 	}
@@ -92,8 +88,7 @@ func TestUnsafeHashLoad(t *testing.T) {
 		if !ok {
 			t.Fatalf("key `%s` expected to be in hash", tt.Key)
 		}
-
-		if rec.AccessedAt.IsZero() {
+		if rec.Meta.AccessedAt.IsZero() {
 			t.Fatalf("accessed at time for `%s` must be non-zero", tt.Key)
 		}
 	}

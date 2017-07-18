@@ -9,28 +9,44 @@ import (
 	"memhashd/system/log"
 )
 
+// Store is an interface of the store.
 type Store interface {
 	hash.Hash
+
+	// Serve serves the request and returns associated record
+	// as a response of processing.
 	Serve(r Request) (hash.Record, error)
 }
 
+// Config is a configuration of the store.
 type Config struct {
+	// Capacity is an initial capacity of the store.
 	Capacity int
 }
 
+// store is a hash-table storage with keys expiration.
 type store struct {
+	// Hash map in an underlying storage.
 	hashMap hash.Hash
 
+	// Heap used to order the expiration timers for the records
+	// persisted in the storage. Each time-point will be extracted
+	// in increasing order.
 	expireHeap  *timeHeap
 	expireTimer *refreshTimer
 
+	// A mutex to access elements of the storage.
 	worldMu sync.Mutex
 }
 
+// New creates a new instance of the store according to the provided
+// configuration.
 func New(config *Config) Store {
 	return newStore(config)
 }
 
+// newStore creates a new instance of the store according to the
+// given configuration.
 func newStore(config *Config) *store {
 	return &store{
 		hashMap:     hash.NewUnsafeHash(config.Capacity),
@@ -39,12 +55,16 @@ func newStore(config *Config) *store {
 	}
 }
 
+// Keys returns a list of keys persisted in a store.
 func (s *store) Keys() []string {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
 	return s.hashMap.Keys()
 }
 
+// Load returns a record persisted under the given key. If the record
+// is expired and it was not deleted by a timer, it will be deleted
+// on attempt to read it.
 func (s *store) Load(key string) (rec hash.Record, ok bool) {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
@@ -64,6 +84,8 @@ func (s *store) Load(key string) (rec hash.Record, ok bool) {
 	return rec, ok
 }
 
+// Store persists a give record under the specified key. If record is
+// not persistent, it will be scheduled for remove.
 func (s *store) Store(key string, rec hash.Record) hash.Record {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
@@ -85,6 +107,8 @@ func (s *store) Store(key string, rec hash.Record) hash.Record {
 	return rec
 }
 
+// deleteAfter removes all keys, which lifetime is less the specified
+// cut-off interval.
 func (s *store) deleteAfter(cutoff time.Time) {
 	s.DeleteExpiredKeys(cutoff)
 	s.worldMu.Lock()
@@ -135,12 +159,15 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 		"stopped deletion of expired keys")
 }
 
+// Delete removes a given key from the store.
 func (s *store) Delete(key string) {
 	s.worldMu.Lock()
 	defer s.worldMu.Unlock()
 	s.hashMap.Delete(key)
 }
 
+// Serve proceses a request. An access to the store is synchronized
+// with a world mutex.
 func (s *store) Serve(r Request) (hash.Record, error) {
 	return r.Process(s)
 }
