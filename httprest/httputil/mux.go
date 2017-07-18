@@ -7,10 +7,14 @@ import (
 	"sync"
 )
 
-var paramRegexp = regexp.MustCompile(`\{([^\}]+)\}`)
+var (
+	paramRegexp = regexp.MustCompile(`\{([^\}]+)\}`)
 
-var defaultMux = NewServeMux()
+	defaultMux = NewServeMux()
+)
 
+// Handle registers a handler for the given method and pattern in a
+// default HTTP multiplexer.
 func Handle(method, pattern string, handler http.Handler) {
 	err := defaultMux.Handle(method, pattern, handler)
 	if err != nil {
@@ -18,6 +22,8 @@ func Handle(method, pattern string, handler http.Handler) {
 	}
 }
 
+// HandleFunc registers a handler function for the given method and
+// pattern in a default HTTP multiplexer.
 func HandleFunc(method, pattern string, handler http.HandlerFunc) {
 	err := defaultMux.HandleFunc(method, pattern, handler)
 	if err != nil {
@@ -25,22 +31,28 @@ func HandleFunc(method, pattern string, handler http.HandlerFunc) {
 	}
 }
 
+// muxEntry is an entry of the multiplexer.
 type muxEntry struct {
 	h       http.Handler
 	pattern *regexp.Regexp
 	params  []string
 }
 
+// responseWriter is an implementation of the http.ResponseWriter
+// interface that marks the persists the fact of writing a header.
 type responseWriter struct {
 	http.ResponseWriter
 	wroteHeader bool
 }
 
+// WriteHeader implements http.ResponseWriter interface.
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 	rw.wroteHeader = true
 }
 
+// ServeMux is a HTTP request multiplexer. It matches incoming requests
+// by method and target URL and executes a registered handler for them.
 type ServeMux struct {
 	m        map[string][]muxEntry
 	f        []http.Handler
@@ -48,27 +60,33 @@ type ServeMux struct {
 	NotFound http.Handler
 }
 
+// NewServeMux creates a new instance of the ServeMux.
 func NewServeMux() *ServeMux {
 	return &ServeMux{m: make(map[string][]muxEntry)}
 }
 
+// HandleFilter registers a filter that will be executed before each
+// registered handler. When filter writes a response header, processing
+// of the requests stops.
 func (mux *ServeMux) HandleFilter(handler http.Handler) {
 	mux.mu.Lock()
 	defer mux.mu.Unlock()
-
 	mux.f = append(mux.f, handler)
 }
 
+// HandleFilterFunc registers a filter function that will be executed
+// before each registered handler.
 func (mux *ServeMux) HandleFilterFunc(handler http.HandlerFunc) {
 	mux.HandleFilter(handler)
 }
 
+// Handle registers a handler for the given method and URL pattern.
 func (mux *ServeMux) Handle(method, pattern string, handler http.Handler) error {
 	mux.mu.Lock()
 	defer mux.mu.Unlock()
 
 	path := strings.Split(pattern, "/")
-	params := make([]string, 0)
+	var params []string
 
 	for index, p := range path {
 		match := paramRegexp.FindStringSubmatch(p)
@@ -91,10 +109,14 @@ func (mux *ServeMux) Handle(method, pattern string, handler http.Handler) error 
 	return nil
 }
 
+// HandleFunc registers a handler function for the given method and URL
+// pattern.
 func (mux *ServeMux) HandleFunc(method, pattern string, handler http.HandlerFunc) error {
 	return mux.Handle(method, pattern, handler)
 }
 
+// ServeHTTP dispatches the requests to the handler whose method
+// and pattern most closely matches the request URL.
 func (mux *ServeMux) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	mux.mu.RLock()
 	w := &responseWriter{rw, false}
@@ -150,6 +172,7 @@ func (mux *ServeMux) notAllowed(rw http.ResponseWriter, r *http.Request) {
 	http.Error(rw, "method not allowed", http.StatusMethodNotAllowed)
 }
 
+// Params returns a list of URL parameters.
 func Params(r *http.Request, s ...string) (p []string) {
 	for _, key := range s {
 		p = append(p, r.URL.Query().Get(key))
@@ -157,6 +180,7 @@ func Params(r *http.Request, s ...string) (p []string) {
 	return
 }
 
+// Param returns a single URL parameter.
 func Param(r *http.Request, s string) string {
 	return r.URL.Query().Get(s)
 }

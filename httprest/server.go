@@ -15,6 +15,8 @@ import (
 	"memhashd/system/uuid"
 )
 
+// Server is an HTTP API server, it provides an access to the key-value
+// storage.
 type Server struct {
 	laddr  net.Addr
 	mux    *httputil.ServeMux
@@ -22,10 +24,17 @@ type Server struct {
 	ctx    context.Context
 }
 
+// Config is a configuration of the HTTP API server.
 type Config struct {
-	Server    server.Server
+	// Server is an instance of the key-value storage.
+	Server server.Server
+
+	// LocalAddr is an address to listen for incoming requests.
 	LocalAddr net.Addr
-	Context   context.Context
+
+	// Context is a context of the server, it defines a lifetime
+	// of each request handled by the server.
+	Context context.Context
 }
 
 func (c *Config) context() context.Context {
@@ -35,6 +44,7 @@ func (c *Config) context() context.Context {
 	return context.Background()
 }
 
+// NewServer creates a new instance of the Server.
 func NewServer(config *Config) *Server {
 	s := &Server{
 		laddr:  config.LocalAddr,
@@ -97,7 +107,7 @@ func (s *Server) keysHandler(rw http.ResponseWriter, r *http.Request) {
 	resp := s.server.Do(s.ctx, req)
 	if resp.Err() != nil {
 		const text = "unable to load keys, %s"
-		body := client.Error{fmt.Sprintf(text, err)}
+		body := client.Error{fmt.Sprintf(text, resp.Err())}
 
 		log.ErrorLogf("server/KEYS_HANDLER",
 			"%s failed, %s", req.ID, resp.Err())
@@ -300,6 +310,7 @@ func (s *Server) itemHandler(rw http.ResponseWriter, r *http.Request) {
 	wf.Write(rw, cresp, http.StatusOK)
 }
 
+// ListenAndServe starts an HTTP server at the configured endpoint.
 func (s *Server) ListenAndServe() error {
 	return http.ListenAndServe(s.laddr.String(), s.mux)
 }

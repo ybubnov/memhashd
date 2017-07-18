@@ -10,19 +10,20 @@ import (
 var (
 	// ErrNotSupported returnes when value provided in a Content-Type header is
 	// not supported by any formatter.
-	ErrNotSuppoted = errors.New("format: requested format not supported")
+	ErrNotSupported = errors.New("format: requested format not supported")
 
+	// formatters stores registered formatters.
 	formatters = make(map[string]ReadWriteFormatter)
 )
 
-// Marshaler is the interface implemented by an object
+// WriteFormatter is the interface implemented by an object
 // that can marshal itself into a some form.
 type WriteFormatter interface {
 	// Write writes data in a specific format to response writer.
 	Write(http.ResponseWriter, interface{}, int) error
 }
 
-// Unmarshaler is the interface implemented by an object
+// ReadFormatter is the interface implemented by an object
 // that can unmarshal a representation of itself.
 type ReadFormatter interface {
 	// Read reads data in a specific format from request.
@@ -49,14 +50,10 @@ func Register(t string, f ReadWriteFormatter) {
 	formatters[t] = f
 }
 
-// FormatNameList returns list of registered formatters names.
-func FormatNameList() (names []string) {
-	for name := range formatters {
-		names = append(names, name)
-	}
-	return
-}
-
+// Format returns read and write formatters according to the headers
+// of the HTTP request. When either content-type or accept media type
+// is not supported, method terminates the request with respective
+// status code.
 func Format(rw http.ResponseWriter, r *http.Request) (ReadFormatter, WriteFormatter, error) {
 	rf, err := ReadFormat(r)
 	if err != nil {
@@ -77,11 +74,13 @@ func Format(rw http.ResponseWriter, r *http.Request) (ReadFormatter, WriteFormat
 func formatOf(t string) (ReadWriteFormatter, error) {
 	formatter, ok := formatters[t]
 	if !ok {
-		return &JSONFormatter{}, ErrNotSuppoted
+		return &JSONFormatter{}, ErrNotSupported
 	}
 	return formatter, nil
 }
 
+// ReadFormat returns a read-formatter according to the content type
+// specified in headers of the HTTP request.
 func ReadFormat(r *http.Request) (ReadFormatter, error) {
 	f, err := formatOf(r.Header.Get(HeaderContentType))
 	if err != nil {
@@ -91,6 +90,8 @@ func ReadFormat(r *http.Request) (ReadFormatter, error) {
 	return f, err
 }
 
+// WriteFormat returns a write-formatter according to the accept header
+// specified in the HTTP request.
 func WriteFormat(r *http.Request) (WriteFormatter, error) {
 	f, err := formatOf(r.Header.Get(HeaderAccept))
 	if err != nil {

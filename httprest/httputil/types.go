@@ -1,10 +1,22 @@
 package httputil
 
 const (
-	TypeAny             = "*/*"
+	// TypeAny is Accept header of the request that accepts data in any
+	// format.
+	TypeAny = "*/*"
+
+	// TypeApplicationJSON is a JSON media type.
 	TypeApplicationJSON = "application/json"
+
+	// TypeApplicationYAML is an YAML media type.
 	TypeApplicationYAML = "application/yaml"
-	TypeApplication     = "application/*"
-	TypeTextHTML        = "text/html"
-	TypeText            = "text/*"
+
+	// TypeApplication is an application media type.
+	TypeApplication = "application/*"
+
+	// TypeTextHTML is a HTML media type.
+	TypeTextHTML = "text/html"
+
+	// TypeText is a text media type.
+	TypeText = "text/*"
 )

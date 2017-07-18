@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// Dial setups a connection to the given address. If TLS configuration
+// is not empty, it also sets up a security transport.
 func Dial(addr string, config *tls.Config) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -61,7 +63,7 @@ func Dial(addr string, config *tls.Config) (net.Conn, error) {
 
 	// Setup a TLS over an established connection, when TLS
 	// configuration is provided.
-	var c net.Conn = conn
+	c := net.Conn(conn)
 	if config != nil {
 		c = tls.Client(conn, config)
 	}
