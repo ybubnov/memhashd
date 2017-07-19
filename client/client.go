@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// DefaultTransport is a default configuration of the Transport.
 var DefaultTransport http.RoundTripper = &http.Transport{
 	Proxy: http.ProxyFromEnvironment,
 	DialContext: (&net.Dialer{
@@ -27,6 +28,7 @@ var DefaultTransport http.RoundTripper = &http.Transport{
 	ExpectContinueTimeout: 1 * time.Second,
 }
 
+// Config is a configuration of the client.
 type Config struct {
 	// Host is the address of the server.
 	Host string
@@ -45,6 +47,7 @@ func (cfg *Config) transport() http.RoundTripper {
 	return DefaultTransport
 }
 
+// Meta is a metadata about the record in a hash.
 type Meta struct {
 	// Index defines a record serial number. Each time the record
 	// data is updated an index value is incremented.
@@ -67,64 +70,117 @@ type Meta struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Node is a node in a cluster.
 type Node struct {
-	ID   string `json:"id"`
+	// ID is a node unique identifier.
+	ID string `json:"id"`
+
+	// Addr is an endpoint of the node in a cluster (a port:host pair).
 	Addr string `json:"addr"`
 }
 
+// Error is a server error, usually it is returned when the user
+// provided incorrect parameters of the request or data for the
+// operation is not valid (e.g. dict item for string).
 type Error struct {
+	// Text is a text of the error.
 	Text string `json:"text"`
 }
 
+// Error implements error interface.
+func (e *Error) Error() string {
+	return e.Text
+}
+
+// Response defines a response being returned by the server in case
+// of the successful handling of the request.
 type Response struct {
+	// Action specifies a name of the action being processed.
 	Action string `json:"action"`
 
+	// Meta defines a metadata about the returned record.
 	Meta Meta `json:"meta,omitempty"`
 
+	// Data is the data returned from the key-value storage.
 	Data interface{} `json:"data,omitempty"`
 
+	// Node is a node of the cluster that stores the requested data.
+	//
+	// For the sake of communication speed, users could use it to
+	// create an additional client for communication with nodes
+	// directly.
 	Node Node `json:"node"`
 }
 
+// LoadOptions defines parameters of the load request.
 type LoadOptions struct {
+	// Key is a key to load.
 	Key string `json:"-"`
 }
 
+// StoreOptions defines parameters of the store request.
 type StoreOptions struct {
-	Key        string      `json:"-"`
-	Data       interface{} `json:"data"`
-	ExpireTime Duration    `json:"expire_time"`
+	// Key is a key to store.
+	Key string `json:"-"`
+	// Data defines a data to store.
+	Data interface{} `json:"data"`
+	// ExpireTime specifies an expiration of the data.
+	ExpireTime Duration `json:"expire_time"`
 }
 
+// DeleteOptions defines parameters for the delete request.
 type DeleteOptions struct {
+	// Key is a key to delete.
 	Key string `json:"-"`
 }
 
+// DictItemOptions defines parameters for the dict item request.
 type DictItemOptions struct {
-	Key  string      `json:"-"`
+	// Key is a key to use to retrieve the data.
+	Key string `json:"-"`
+	// Item is an item in a dictionary used to access to.
 	Item interface{} `json:"item"`
 }
 
+// ListIndexOptions defines parameters for the list index request.
 type ListIndexOptions struct {
-	Key   string `json:"-"`
+	// Key is a key to use to retrieve the data.
+	Key string `json:"-"`
+	// Index is an index in a list used to access to.
 	Index uint64 `json:"index"`
 }
 
+// Client describes types to communicate with a key-value storage.
 type Client interface {
+	// Keys returns a list of keys.
 	Keys(context.Context) ([]string, error)
+
+	// Load returns a record persisted under the given key.
 	Load(context.Context, *LoadOptions) (*Response, error)
+
+	// Store persists the record under the given key.
 	Store(context.Context, *StoreOptions) (*Response, error)
+
+	// Delete removes the record persisted under the given key.
 	Delete(context.Context, *DeleteOptions) (*Response, error)
+
+	// DictItem returns an element of the dictionary persisted under the
+	// given key and item.
 	DictItem(context.Context, *DictItemOptions) (*Response, error)
+
+	// ListIndex returns an element of the dictionary persisted under the
+	// given key and index.
 	ListIndex(context.Context, *ListIndexOptions) (*Response, error)
 }
 
+// client is a key-value storage client.
 type client struct {
 	host       string
 	tlsConfig  *tls.Config
 	httpClient *http.Client
 }
 
+// NewClient creates a new instance of the Client.
 func NewClient(config *Config) Client {
 	return &client{
 		host: config.Host,
@@ -156,7 +212,7 @@ func (c *client) do(ctx context.Context, method string,
 		}
 	}
 	body := bytes.NewReader(b)
-	req, err := http.NewRequest("GET", u.String(), body)
+	req, err := http.NewRequest(method, u.String(), body)
 	if err != nil {
 		return err
 	}
@@ -166,11 +222,31 @@ func (c *client) do(ctx context.Context, method string,
 	}
 	// Decode the list of nodes from the body of the response.
 	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+
+	// If server returned non-zero status, the response body is treated
+	// as a error message, which will be returned to the user.
+	if resp.StatusCode != http.StatusOK {
+		// Server could return a response without a body (in case of
+		// unexpected errors or dramatic failures), therefore double
+		// check that there is something in a response body.
+		if resp.ContentLength == 0 {
+			return &Error{http.StatusText(resp.StatusCode)}
+		}
+
+		// Decode the error returned by the server and simply forward it
+		// to the client without any modification.
+		var re Error
+		if err := decoder.Decode(&re); err != nil {
+			return err
+		}
+
+		return &re
+	}
+
 	if out == nil {
 		return nil
 	}
-
-	decoder := json.NewDecoder(resp.Body)
 	return decoder.Decode(out)
 }
 
@@ -197,6 +273,13 @@ func (c *client) urlOf(path string) *url.URL {
 	return &url.URL{Scheme: c.scheme(), Host: c.host, Path: path}
 }
 
+// Keys implements Client interface. It retrieve a list of the nodes
+// from the configured server and then polls each one in parallel to
+// retrieve the list of keys. Result will be consolidated into a single
+// list.
+//
+// This operation is extremly fragile as error on single node causes
+// an error of the whole operation.
 func (c *client) Keys(ctx context.Context) ([]string, error) {
 	nodes, err := c.nodes(ctx)
 	if err != nil {
@@ -209,6 +292,7 @@ func (c *client) Keys(ctx context.Context) ([]string, error) {
 		errs = make(chan error, len(nodes))
 	)
 
+	// Retreive a list of keys from the given node.
 	retrieve := func(n *Node) {
 		u := &url.URL{
 			Scheme: c.scheme(),
@@ -221,6 +305,8 @@ func (c *client) Keys(ctx context.Context) ([]string, error) {
 		errs <- c.do(ctx, "GET", u, nil, &ks)
 		keys <- ks
 	}
+	// Call each node in parallel and then aggregate the results
+	// into a single list of keys.
 	for _, node := range nodes {
 		wg.Add(1)
 		go retrieve(&node)
@@ -240,6 +326,7 @@ func (c *client) Keys(ctx context.Context) ([]string, error) {
 	return kys, nil
 }
 
+// Load implements Client interface.
 func (c *client) Load(ctx context.Context,
 	opts *LoadOptions) (resp *Response, err error) {
 
@@ -252,6 +339,7 @@ func (c *client) Load(ctx context.Context,
 	return resp, err
 }
 
+// Store implements Client interface.
 func (c *client) Store(ctx context.Context,
 	opts *StoreOptions) (resp *Response, err error) {
 
@@ -264,6 +352,7 @@ func (c *client) Store(ctx context.Context,
 	return resp, err
 }
 
+// Delete implements Client interface.
 func (c *client) Delete(ctx context.Context,
 	opts *DeleteOptions) (resp *Response, err error) {
 
@@ -276,6 +365,7 @@ func (c *client) Delete(ctx context.Context,
 	return resp, err
 }
 
+// DictItem implements Client interface.
 func (c *client) DictItem(ctx context.Context,
 	opts *DictItemOptions) (resp *Response, err error) {
 
@@ -288,6 +378,7 @@ func (c *client) DictItem(ctx context.Context,
 	return resp, err
 }
 
+// ListIndex implement Client interface.
 func (c *client) ListIndex(ctx context.Context,
 	opts *ListIndexOptions) (resp *Response, err error) {
 

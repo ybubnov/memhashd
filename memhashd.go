@@ -13,12 +13,12 @@ import (
 )
 
 var (
-	defaultLocalAddr Addr = Addr{net.TCPAddr{IP: net.IPv4zero, Port: 2373}}
+	defaultLocalAddr = addr{net.TCPAddr{IP: net.IPv4zero, Port: 2373}}
 )
 
-type AddrSlice []*net.TCPAddr
+type addrSlice []*net.TCPAddr
 
-func (as AddrSlice) String() string {
+func (as addrSlice) String() string {
 	var ss []string
 	for _, arr := range as {
 		ss = append(ss, arr.String())
@@ -26,7 +26,7 @@ func (as AddrSlice) String() string {
 	return strings.Join(ss, ", ")
 }
 
-func (as *AddrSlice) Set(s string) error {
+func (as *addrSlice) Set(s string) error {
 	addr, err := net.ResolveTCPAddr("tcp", s)
 	if err != nil {
 		return err
@@ -35,15 +35,15 @@ func (as *AddrSlice) Set(s string) error {
 	return nil
 }
 
-type Addr struct {
+type addr struct {
 	net.TCPAddr
 }
 
-func (a *Addr) String() string {
+func (a *addr) String() string {
 	return a.TCPAddr.String()
 }
 
-func (a *Addr) Set(s string) error {
+func (a *addr) Set(s string) error {
 	addr, err := net.ResolveTCPAddr("tcp", s)
 	if err != nil {
 		return err
@@ -64,9 +64,9 @@ func help() {
 func main() {
 	var (
 		flHelp        bool
-		flServerAddr  Addr
-		flClientAddr  Addr
-		flJoin        AddrSlice
+		flServerAddr  addr
+		flClientAddr  addr
+		flJoin        addrSlice
 		flJoinRetries int
 	)
 
