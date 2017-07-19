@@ -126,6 +126,10 @@ func (s *Server) keysHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Force the server return empty list instead of nil.
+	if keys == nil {
+		keys = make([]string, 0)
+	}
 	wf.Write(rw, keys, http.StatusOK)
 }
 

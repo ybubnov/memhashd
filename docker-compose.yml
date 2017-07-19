@@ -1,0 +1,56 @@
+---
+version: "3"
+
+services:
+  node1:
+    build: .
+    ports:
+      - "2371:2371"
+      - "8001:8001"
+    networks:
+      overlay:
+        ipv4_address: 172.16.239.10
+    entrypoint:
+      - memhashd
+      - -server-addr=172.16.239.10:2371
+      - -client-addr=172.16.239.10:8001
+      - -join=172.16.239.20:2372
+      - -join=172.16.239.30:2373
+      - -join-retries=5
+  node2:
+    build: .
+    ports:
+      - "2372:2372"
+      - "8002:8002"
+    networks:
+      overlay:
+        ipv4_address: 172.16.239.20
+    entrypoint:
+      - memhashd
+      - -server-addr=172.16.239.20:2372
+      - -client-addr=172.16.239.20:8002
+      - -join=172.16.239.10:2371
+      - -join=172.16.239.30:2373
+  node3:
+    build: .
+    ports:
+      - "2373:2373"
+      - "8003:8003"
+    networks:
+      overlay:
+        ipv4_address: 172.16.239.30
+    entrypoint:
+      - memhashd
+      - -server-addr=172.16.239.30:2373
+      - -client-addr=172.16.239.30:8003
+      - -join=172.16.239.10:2371
+      - -join=172.16.239.20:2372
+
+networks:
+  overlay:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        -
+          subnet: 172.16.239.0/24
