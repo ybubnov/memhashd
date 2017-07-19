@@ -59,6 +59,7 @@ func NewServer(config *Config) *Server {
 	s.mux.HandleFunc("GET", "/v1/keys/{key}/item", s.itemHandler)
 	s.mux.HandleFunc("PUT", "/v1/keys/{key}", s.storeHandler)
 	s.mux.HandleFunc("DELETE", "/v1/keys/{key}", s.deleteHandler)
+	s.mux.HandleFunc("GET", "/v1/nodes", s.nodesHandler)
 	return s
 }
 
@@ -308,6 +309,24 @@ func (s *Server) itemHandler(rw http.ResponseWriter, r *http.Request) {
 		Meta:   s.metaOf(&resp),
 	}
 	wf.Write(rw, cresp, http.StatusOK)
+}
+
+// nodesHandler returns a list of nodes in a cluster, so the clients
+// can easily communicate with each one.
+func (s *Server) nodesHandler(rw http.ResponseWriter, r *http.Request) {
+	var nodes []*client.Node
+	for _, node := range s.server.Nodes() {
+		nodes = append(nodes, &client.Node{
+			ID:   node.ID,
+			Addr: node.Addr.String(),
+		})
+	}
+
+	_, wf, err := httputil.Format(rw, r)
+	if err != nil {
+		return
+	}
+	wf.Write(rw, nodes, http.StatusOK)
 }
 
 // ListenAndServe starts an HTTP server at the configured endpoint.

@@ -1,9 +1,16 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,7 +28,14 @@ var DefaultTransport http.RoundTripper = &http.Transport{
 }
 
 type Config struct {
+	// Host is the address of the server.
+	Host string
+
+	// Transport is the Transport to use for the HTTP client.
 	Transport http.RoundTripper
+
+	// TLSConfig is a TLS configuration for the HTTP client.
+	TLSConfig *tls.Config
 }
 
 func (cfg *Config) transport() http.RoundTripper {
@@ -102,41 +116,186 @@ type Client interface {
 	Store(context.Context, *StoreOptions) (*Response, error)
 	Delete(context.Context, *DeleteOptions) (*Response, error)
 	DictItem(context.Context, *DictItemOptions) (*Response, error)
-	ListItem(context.Context, *ListIndexOptions) (*Response, error)
+	ListIndex(context.Context, *ListIndexOptions) (*Response, error)
 }
 
 type client struct {
+	host       string
+	tlsConfig  *tls.Config
 	httpClient *http.Client
 }
 
-func NewClient(cfg *Config) Client {
+func NewClient(config *Config) Client {
 	return &client{
+		host: config.Host,
 		httpClient: &http.Client{
-			Transport: cfg.transport(),
+			Transport: config.transport(),
 		},
 	}
 }
 
+func (c *client) scheme() string {
+	if c.tlsConfig != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func (c *client) do(ctx context.Context, method string,
+	u *url.URL, in, out interface{}) error {
+
+	var (
+		b   []byte
+		err error
+	)
+
+	if in != nil {
+		b, err = json.Marshal(in)
+		if err != nil {
+			return err
+		}
+	}
+	body := bytes.NewReader(b)
+	req, err := http.NewRequest("GET", u.String(), body)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	// Decode the list of nodes from the body of the response.
+	defer resp.Body.Close()
+	if out == nil {
+		return nil
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	return decoder.Decode(out)
+}
+
+// nodes returns a list of the nodes in a cluster.
+func (c *client) nodes(ctx context.Context) (nodes []Node, err error) {
+	err = c.do(ctx, "GET", c.urlOf("/v1/nodes"), nil, &nodes)
+	return nodes, err
+}
+
+func (c *client) joinerr(ch <-chan error) error {
+	var text []string
+	for err := range ch {
+		if err != nil {
+			text = append(text, err.Error())
+		}
+	}
+	if text != nil {
+		return fmt.Errorf(strings.Join(text, ", "))
+	}
+	return nil
+}
+
+func (c *client) urlOf(path string) *url.URL {
+	return &url.URL{Scheme: c.scheme(), Host: c.host, Path: path}
+}
+
 func (c *client) Keys(ctx context.Context) ([]string, error) {
-	return nil, nil
+	nodes, err := c.nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		wg   sync.WaitGroup
+		keys = make(chan []string, len(nodes))
+		errs = make(chan error, len(nodes))
+	)
+
+	retrieve := func(n *Node) {
+		u := &url.URL{
+			Scheme: c.scheme(),
+			Host:   n.Addr,
+			Path:   "/v1/keys",
+		}
+		defer wg.Done()
+		var ks []string
+
+		errs <- c.do(ctx, "GET", u, nil, &ks)
+		keys <- ks
+	}
+	for _, node := range nodes {
+		wg.Add(1)
+		go retrieve(&node)
+	}
+
+	wg.Wait()
+	close(keys)
+	close(errs)
+
+	if err := c.joinerr(errs); err != nil {
+		return nil, err
+	}
+	var kys []string
+	for ks := range keys {
+		kys = append(kys, ks...)
+	}
+	return kys, nil
 }
 
-func (c *client) Load(ctx context.Context, opts *LoadOptions) (*Response, error) {
-	return nil, nil
+func (c *client) Load(ctx context.Context,
+	opts *LoadOptions) (resp *Response, err error) {
+
+	resp = new(Response)
+	path := fmt.Sprintf("/v1/keys/%s", opts.Key)
+	err = c.do(ctx, "GET", c.urlOf(path), nil, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
-func (c *client) Store(ctx context.Context, opts *StoreOptions) (*Response, error) {
-	return nil, nil
+func (c *client) Store(ctx context.Context,
+	opts *StoreOptions) (resp *Response, err error) {
+
+	resp = new(Response)
+	path := fmt.Sprintf("/v1/keys/%s", opts.Key)
+	err = c.do(ctx, "PUT", c.urlOf(path), opts, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
-func (c *client) Delete(ctx context.Context, opts *DeleteOptions) (*Response, error) {
-	return nil, nil
+func (c *client) Delete(ctx context.Context,
+	opts *DeleteOptions) (resp *Response, err error) {
+
+	resp = new(Response)
+	path := fmt.Sprintf("/v1/keys/%s", opts.Key)
+	err = c.do(ctx, "DELETE", c.urlOf(path), nil, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
-func (c *client) DictItem(ctx context.Context, opts *DictItemOptions) (*Response, error) {
-	return nil, nil
+func (c *client) DictItem(ctx context.Context,
+	opts *DictItemOptions) (resp *Response, err error) {
+
+	resp = new(Response)
+	path := fmt.Sprintf("/v1/keys/%s/item", opts.Key)
+	err = c.do(ctx, "GET", c.urlOf(path), opts, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
-func (c *client) ListItem(ctx context.Context, opts *ListIndexOptions) (*Response, error) {
-	return nil, nil
+func (c *client) ListIndex(ctx context.Context,
+	opts *ListIndexOptions) (resp *Response, err error) {
+
+	resp = new(Response)
+	path := fmt.Sprintf("/v1/keys/%s/index", opts.Key)
+	err = c.do(ctx, "GET", c.urlOf(path), opts, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }

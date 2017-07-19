@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -25,6 +26,12 @@ type stubServer struct {
 func (s *stubServer) ID() string   { return "" }
 func (s *stubServer) Start() error { return nil }
 func (s *stubServer) Stop() error  { return nil }
+
+func (s *stubServer) Nodes() server.Nodes {
+	return server.Nodes{{Addr: &net.TCPAddr{
+		IP: net.ParseIP("127.0.0.1"), Port: 2371,
+	}}}
+}
 
 func (s *stubServer) Do(_ context.Context, req store.Request) server.Response {
 	s.Request = req

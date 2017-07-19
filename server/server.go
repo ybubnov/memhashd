@@ -23,6 +23,9 @@ import (
 
 // Node defines a node in the cluster.
 type Node struct {
+	// ID is an identifier of the node.
+	ID string
+
 	// Addr is an address of the remote node in a cluster.
 	Addr *net.TCPAddr
 
@@ -103,6 +106,9 @@ type Server interface {
 	// ID returns a server identifier.
 	ID() string
 
+	// Nodes returns a list of neighbor nodes.
+	Nodes() Nodes
+
 	// Start starts a server. The start procedure includes setup of the
 	// connections to the shards of the storage.
 	Start() error
@@ -169,6 +175,7 @@ type server struct {
 
 	// A list of cluster nodes.
 	nodes   Nodes
+	nodesMu sync.RWMutex
 	retries int
 
 	// A ring, that implements virtual consistent hashing approach
@@ -198,6 +205,14 @@ func newServer(config *Config) *server {
 // implementation of the key-value storage.
 func New(config *Config) Server {
 	return newServer(config)
+}
+
+// Nodes implements Server interface, it returns a list of nodes
+// in a cluster.
+func (s *server) Nodes() Nodes {
+	s.nodesMu.RLock()
+	defer s.nodesMu.RUnlock()
+	return s.nodes
 }
 
 // ID returns a server identifier.
@@ -236,7 +251,7 @@ func (s *server) joinN(nodes Nodes) error {
 
 			mu.Lock()
 			defer mu.Unlock()
-			s.nodes[ii] = &Node{Addr: n.Addr, Conn: conn}
+			s.nodes[ii] = &Node{ID: uuid.New(), Addr: n.Addr, Conn: conn}
 		}(ii, node)
 	}
 
@@ -276,8 +291,11 @@ func (s *server) join(node *Node) (net.Conn, error) {
 
 	for retries <= s.retries {
 		log.DebugLogf("server/JOIN", "dialing %s node", node.Addr)
-		conn, err := netutil.Dial(node.Addr.String(), nil)
+		laddr := &net.TCPAddr{IP: net.IPv4zero}
+		conn, err := netutil.Dial(laddr, node.Addr, nil)
 		if err == nil {
+			// Write as a hello-message a local IP address as an
+			// identifier of the
 			return conn, nil
 		}
 
@@ -384,6 +402,8 @@ func (s *server) Start() (err error) {
 		}
 	}()
 
+	s.nodesMu.Lock()
+	defer s.nodesMu.Unlock()
 	if err = s.joinN(s.nodes); err != nil {
 		log.ErrorLogf("server/START",
 			"failed to setup connections to shards, %s", err)
@@ -393,7 +413,7 @@ func (s *server) Start() (err error) {
 	// Add a self nodes with a nil-connection. Sort all nodes in a
 	// lexicographical order, so on each node the order will be
 	// preserved.
-	s.nodes = append(s.nodes, &Node{Addr: s.laddr})
+	s.nodes = append(s.nodes, &Node{ID: uuid.New(), Addr: s.laddr})
 	sort.Sort(s.nodes)
 
 	// Insert a new nodes into a sharding ring.
@@ -479,16 +499,22 @@ func (s *server) Do(ctx context.Context, req store.Request) Response {
 	index := elem.Value.(int)
 
 	node := s.nodes[index]
-	fmt.Println(node.Addr, node.Conn)
 	if node.Conn == nil || req.Hash() == "" {
 		// Handle a local call.
 		rec, err := s.store.Serve(req)
 		if err != nil {
 			log.ErrorLogf("server/PROCESSING_REQUEST",
 				"%s failed with %s", req, err)
-			return Response{Status: statusOf(err), Error: err.Error()}
+			return Response{
+				Status: statusOf(err),
+				Error:  err.Error(),
+			}
 		}
-		return Response{Record: rec, Node: *node, Status: statusOf(err)}
+		return Response{
+			Record: rec,
+			Node:   *node,
+			Status: statusOf(err),
+		}
 	}
 
 	// Handle a redirect of the request to another node.
@@ -496,7 +522,10 @@ func (s *server) Do(ctx context.Context, req store.Request) Response {
 	if err != nil {
 		log.ErrorLogf("service/PROCESSING_REQUEST",
 			"redirect of %s failed with %s", req, err)
-		return Response{Status: statusOf(err), Error: err.Error()}
+		return Response{
+			Status: statusOf(err),
+			Error:  err.Error(),
+		}
 	}
 	return resp
 }

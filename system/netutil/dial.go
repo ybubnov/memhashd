@@ -3,37 +3,12 @@ package netutil
 import (
 	"crypto/tls"
 	"net"
-	"strconv"
 	"time"
 )
 
 // Dial setups a connection to the given address. If TLS configuration
 // is not empty, it also sets up a security transport.
-func Dial(addr string, config *tls.Config) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	rport, err := strconv.ParseUint(port, 10, 16)
-	if err != nil {
-		return nil, err
-	}
-
-	// The IP address lookup does not respect the /etc/hosts file,
-	// which is used to hijack an environment for the testing purposes.
-	//
-	// Therefore, instead of sending pure DNS queries, we will start
-	// from the /etc/hosts file.
-	rip, err := net.ResolveIPAddr("ip", host)
-	if err != nil {
-		return nil, err
-	}
-
-	// Let the system bind the local address to any available one.
-	laddr := &net.TCPAddr{IP: net.IPv4zero, Port: 0}
-	raddr := &net.TCPAddr{IP: rip.IP, Port: int(rport)}
-
+func Dial(laddr, raddr *net.TCPAddr, config *tls.Config) (net.Conn, error) {
 	conn, err := net.DialTCP("tcp", laddr, raddr)
 	if err != nil {
 		return nil, err
