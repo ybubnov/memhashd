@@ -12,6 +12,8 @@ services:
         ipv4_address: 172.16.239.10
     entrypoint:
       - memhashd
+      - -tls-cert=/etc/memhash.d/cert.pem
+      - -tls-key=/etc/memhash.d/key.pem
       - -server-addr=172.16.239.10:2371
       - -client-addr=172.16.239.10:8001
       - -join=172.16.239.20:2372
@@ -27,6 +29,8 @@ services:
         ipv4_address: 172.16.239.20
     entrypoint:
       - memhashd
+      - -tls-cert=/etc/memhash.d/cert.pem
+      - -tls-key=/etc/memhash.d/key.pem
       - -server-addr=172.16.239.20:2372
       - -client-addr=172.16.239.20:8002
       - -join=172.16.239.10:2371
@@ -41,6 +45,8 @@ services:
         ipv4_address: 172.16.239.30
     entrypoint:
       - memhashd
+      - -tls-cert=/etc/memhash.d/cert.pem
+      - -tls-key=/etc/memhash.d/key.pem
       - -server-addr=172.16.239.30:2373
       - -client-addr=172.16.239.30:8003
       - -join=172.16.239.10:2371

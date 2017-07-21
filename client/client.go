@@ -35,9 +35,6 @@ type Config struct {
 
 	// Transport is the Transport to use for the HTTP client.
 	Transport http.RoundTripper
-
-	// TLSConfig is a TLS configuration for the HTTP client.
-	TLSConfig *tls.Config
 }
 
 func (cfg *Config) transport() http.RoundTripper {

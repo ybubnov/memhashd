@@ -63,11 +63,14 @@ func help() {
 
 func main() {
 	var (
-		flHelp        bool
-		flServerAddr  addr
-		flClientAddr  addr
-		flJoin        addrSlice
-		flJoinRetries int
+		flHelp          bool
+		flServerAddr    addr
+		flClientAddr    addr
+		flJoin          addrSlice
+		flJoinRetries   int
+		flTLSKey        string
+		flTLSCert       string
+		flNumPartitions int
 	)
 
 	flag.BoolVar(&flHelp, "help", false, "print usage")
@@ -75,6 +78,9 @@ func main() {
 	flag.Var(&flJoin, "join", "join shard to the cluster")
 	flag.Var(&flServerAddr, "server-addr", "address to bind for server communication")
 	flag.Var(&flClientAddr, "client-addr", "address to bind for client access")
+	flag.StringVar(&flTLSKey, "tls-key", "", "path to the TLS key file")
+	flag.StringVar(&flTLSCert, "tls-cert", "", "path to the TLS key file")
+	flag.IntVar(&flNumPartitions, "num-partitions", 16384, "number of the data partitions")
 
 	flag.Parse()
 
@@ -90,11 +96,12 @@ func main() {
 	}
 
 	s := server.New(&server.Config{
-		NumPartitions: 64,
+		NumPartitions: flNumPartitions,
 		NumRetries:    flJoinRetries,
-		TLSEnable:     false,
 		Nodes:         nodes,
 		LocalAddr:     &flServerAddr.TCPAddr,
+		TLSCertFile:   flTLSCert,
+		TLSKeyFile:    flTLSKey,
 	})
 
 	defer s.Stop()
@@ -103,8 +110,10 @@ func main() {
 	}
 
 	hs := httprest.NewServer(&httprest.Config{
-		Server:    s,
-		LocalAddr: &flClientAddr.TCPAddr,
+		Server:      s,
+		TLSCertFile: flTLSCert,
+		TLSKeyFile:  flTLSKey,
+		LocalAddr:   &flClientAddr.TCPAddr,
 	})
 	err := hs.ListenAndServe()
 	if err != nil {

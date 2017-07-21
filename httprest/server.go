@@ -22,6 +22,11 @@ type Server struct {
 	mux    *httputil.ServeMux
 	server server.Server
 	ctx    context.Context
+
+	// TLS certificate and key file path to setup a secure server
+	// connection. If empty, an unencrypted listener starts.
+	tlsCertFile string
+	tlsKeyFile  string
 }
 
 // Config is a configuration of the HTTP API server.
@@ -35,6 +40,11 @@ type Config struct {
 	// Context is a context of the server, it defines a lifetime
 	// of each request handled by the server.
 	Context context.Context
+
+	// Path to TLS certificate and key files. When both values are not
+	// empty these parameters will be used to configure TLS.
+	TLSKeyFile  string
+	TLSCertFile string
 }
 
 func (c *Config) context() context.Context {
@@ -47,10 +57,12 @@ func (c *Config) context() context.Context {
 // NewServer creates a new instance of the Server.
 func NewServer(config *Config) *Server {
 	s := &Server{
-		laddr:  config.LocalAddr,
-		mux:    httputil.NewServeMux(),
-		server: config.Server,
-		ctx:    config.context(),
+		laddr:       config.LocalAddr,
+		mux:         httputil.NewServeMux(),
+		server:      config.Server,
+		ctx:         config.context(),
+		tlsCertFile: config.TLSCertFile,
+		tlsKeyFile:  config.TLSKeyFile,
 	}
 
 	s.mux.HandleFunc("GET", "/v1/keys", s.keysHandler)
@@ -335,5 +347,10 @@ func (s *Server) nodesHandler(rw http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts an HTTP server at the configured endpoint.
 func (s *Server) ListenAndServe() error {
+	if s.tlsCertFile != "" && s.tlsKeyFile != "" {
+		return http.ListenAndServeTLS(
+			s.laddr.String(), s.tlsCertFile, s.tlsKeyFile, s.mux)
+	}
+
 	return http.ListenAndServe(s.laddr.String(), s.mux)
 }

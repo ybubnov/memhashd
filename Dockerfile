@@ -10,7 +10,8 @@ COPY . /go/src/memhashd
 RUN go build -o /usr/bin/memhashd memhashd \
     && rm -rf /go/src/memhashd
 
-RUN mkdir -p /var/lib/memhashd
+RUN mkdir -p /etc/memhash.d/ /var/lib/memhashd/
+COPY certs /etc/memhash.d/
 WORKDIR /var/lib/memhashd
 
 ENTRYPOINT ["/usr/bin/memhashd"]

@@ -29,6 +29,18 @@ The binary accepts the following parameters:
 
 - ```-join-retries``` a number of attempts used to join to the cluster.
 
+- ```-tls-key``` a path to the TLS x509 key file
+
+- ```-tls-cert``` a path to the TLS x509 certificate file
+
+- ```-num-partitions``` a number of the partitions (or buckets) into which a
+whole space is divided. Each partition will is assigned to the concrete node
+in a cluster.
+
+
+**Note**, if TLS is enabled, use ```-k``` flag in cURL commands below unless
+the certificates are not self-signed!
+
 ### Start a cluster
 In order to start a cluster of three nodes, execute the following command:
 ```sh

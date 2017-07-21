@@ -2,13 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -138,11 +138,8 @@ type Config struct {
 	// before giving up on attempts to establish connections.
 	NumRetries int
 
-	// TLSEnable enables TLS, when set to true and disables otherwise.
-	TLSEnable bool
-
-	// Path to TLS certificate and key files. When TLSEnable set to true,
-	// these parameters will be used to configure TLS.
+	// Path to TLS certificate and key files. When both values are not
+	// empty these parameters will be used to configure TLS.
 	TLSCertFile string
 	TLSKeyFile  string
 }
@@ -184,17 +181,24 @@ type server struct {
 
 	// Store is an actual storage of the server.
 	store store.Store
+
+	// TLS configuration used to setup an encryption for a channels
+	// between nodes in a cluster.
+	tlsKeyFile  string
+	tlsCertFile string
 }
 
 // newServer creates a new instance of the clustered key-value server
 // according to the specified configuration.
 func newServer(config *Config) *server {
 	return &server{
-		id:      uuid.New(),
-		nodes:   config.Nodes,
-		laddr:   config.LocalAddr,
-		ring:    ring.New(config.NumPartitions),
-		retries: config.NumRetries,
+		id:          uuid.New(),
+		nodes:       config.Nodes,
+		laddr:       config.LocalAddr,
+		ring:        ring.New(config.NumPartitions),
+		retries:     config.NumRetries,
+		tlsCertFile: config.TLSCertFile,
+		tlsKeyFile:  config.TLSKeyFile,
 		store: store.New(&store.Config{
 			Capacity: config.NumPartitions,
 		}),
@@ -291,8 +295,10 @@ func (s *server) join(node *Node) (net.Conn, error) {
 
 	for retries <= s.retries {
 		log.DebugLogf("server/JOIN", "dialing %s node", node.Addr)
+		config := netutil.TLSConfig(s.tlsCertFile, s.tlsKeyFile)
+
 		laddr := &net.TCPAddr{IP: net.IPv4zero}
-		conn, err := netutil.Dial(laddr, node.Addr, nil)
+		conn, err := netutil.Dial(laddr, node.Addr, config)
 		if err == nil {
 			// Write as a hello-message a local IP address as an
 			// identifier of the
@@ -316,29 +322,23 @@ func (s *server) join(node *Node) (net.Conn, error) {
 // listenAndServe starts a listener on the configured endpoint. This
 // listener is used for communication with the rest of the nodes in a
 // cluster.
-func (s *server) listenAndServe() error {
-	host, port, err := net.SplitHostPort(s.laddr.String())
-	if err != nil {
+func (s *server) listenAndServe() (err error) {
+	config := netutil.TLSConfig(s.tlsCertFile, s.tlsKeyFile)
+	listen := net.Listen
+
+	if config != nil {
+		listen = func(network, laddr string) (net.Listener, error) {
+			return tls.Listen(network, laddr, config)
+		}
+	}
+
+	if s.ln, err = listen("tcp", s.laddr.String()); err != nil {
 		log.ErrorLogf("server/LISTEN_AND_SERVE",
-			"failed to parse address: %s", err)
+			"failed to start a listener, %s", err)
 		return err
 	}
 
-	portNo, err := strconv.ParseInt(port, 10, 16)
-	if err != nil {
-		return err
-	}
-
-	laddr := &net.TCPAddr{IP: net.ParseIP(host), Port: int(portNo)}
-	s.ln, err = net.ListenTCP("tcp", laddr)
-	if err != nil {
-		log.ErrorLogf("server/LISTEN_AND_SERVE",
-			"failed to start listener: %s", err)
-		return err
-	}
-
-	log.InfoLogf("server/LISTEN_AND_SERVE",
-		"started at %s", s.laddr)
+	log.InfoLogf("server/LISTEN_AND_SERVE", "started at %s", s.laddr)
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
