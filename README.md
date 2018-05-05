@@ -1,5 +1,7 @@
-# memhashd - The distributed key-value storage
+# memhashd - The sharded key-value storage
 
+[![Build Status][BuildStatus]](https://travis-ci.org/ybubnov/memhashd)
+[![Documentation][Documentation]](https://godoc.org/github.com/ybubnov/memhashd)
 
 ## Installation
 
@@ -250,3 +252,6 @@ Content-Length: 304
 The memhashd is distributed under MIT license, therefore you are free to do
 with code whatever you want. See the [LICENSE](LICENSE) file for full license
 text.
+
+[BuildStatus]:   https://travis-ci.org/ybubnov/memhashd.svg?branch=master
+[Documentation]: https://godoc.org/github.com/ybubnov/memhashd?status.svg
