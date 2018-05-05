@@ -3,7 +3,7 @@ package netutil
 import (
 	"crypto/tls"
 
-	"memhashd/system/log"
+	"github.com/ybubnov/memhashd/system/log"
 )
 
 // TLSConfig builds a TLS configuration based on the given certificate

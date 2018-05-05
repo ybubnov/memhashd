@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"memhashd/container/hash"
+	"github.com/ybubnov/memhashd/container/hash"
 )
 
 func TestStoreStore(t *testing.T) {

@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"memhashd/container/hash"
-	"memhashd/container/ring"
-	"memhashd/container/store"
-	"memhashd/system/log"
-	"memhashd/system/netutil"
-	"memhashd/system/uuid"
+	"github.com/ybubnov/go-uuid"
+	"github.com/ybubnov/memhashd/container/hash"
+	"github.com/ybubnov/memhashd/container/ring"
+	"github.com/ybubnov/memhashd/container/store"
+	"github.com/ybubnov/memhashd/system/log"
+	"github.com/ybubnov/memhashd/system/netutil"
 )
 
 // Node defines a node in the cluster.

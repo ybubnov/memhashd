@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"time"
 
-	"memhashd/container/hash"
+	"github.com/ybubnov/memhashd/container/hash"
 )
 
 const (

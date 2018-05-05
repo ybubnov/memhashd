@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"memhashd/container/hash"
+	"github.com/ybubnov/memhashd/container/hash"
 )
 
 func TestMakeRequest(t *testing.T) {

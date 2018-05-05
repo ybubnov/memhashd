@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"memhashd/container/hash"
-	"memhashd/system/log"
+	"github.com/ybubnov/memhashd/container/hash"
+	"github.com/ybubnov/memhashd/system/log"
 )
 
 // Store is an interface of the store.

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"memhashd/system/log"
+	"github.com/ybubnov/memhashd/system/log"
 )
 
 var (

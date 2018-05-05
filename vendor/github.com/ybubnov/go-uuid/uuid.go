@@ -224,7 +224,7 @@ func (s *nopSource) Next() (string, error) {
 // Stop implements Source interface. It does nothing.
 func (s *nopSource) Stop() {}
 
-// NopSource returns UUID source that generates only passed string.
+// A NopSource returns UUID source that generates only passed string.
 // This function can be used for testing purposes.
 func NopSource(s string) Source {
 	return &nopSource{s}

@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"time"
 
-	"memhashd/client"
-	"memhashd/container/store"
-	"memhashd/httprest/httputil"
-	"memhashd/server"
-	"memhashd/system/log"
-	"memhashd/system/uuid"
+	"github.com/ybubnov/go-uuid"
+	"github.com/ybubnov/memhashd/client"
+	"github.com/ybubnov/memhashd/container/store"
+	"github.com/ybubnov/memhashd/httprest/httputil"
+	"github.com/ybubnov/memhashd/server"
+	"github.com/ybubnov/memhashd/system/log"
 )
 
 // Server is an HTTP API server, it provides an access to the key-value

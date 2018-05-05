@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"memhashd/httprest"
-	"memhashd/server"
-	"memhashd/system/log"
+	"github.com/ybubnov/memhashd/httprest"
+	"github.com/ybubnov/memhashd/server"
+	"github.com/ybubnov/memhashd/system/log"
 )
 
 var (

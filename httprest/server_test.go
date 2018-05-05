@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"memhashd/client"
-	"memhashd/container/hash"
-	"memhashd/container/store"
-	"memhashd/server"
+	"github.com/ybubnov/memhashd/client"
+	"github.com/ybubnov/memhashd/container/hash"
+	"github.com/ybubnov/memhashd/container/store"
+	"github.com/ybubnov/memhashd/server"
 )
 
 type stubServer struct {
